@@ -1,12 +1,13 @@
 const fs = require("fs");
 const path = require("path");
 const XLSX = require('xlsx');
-const { readExcelSheet } = require("../utils/excelUtils");
+const { readExcelSheet, excelDateToJSDate } = require("../utils/excelUtils");
 const { processEmptyPackage } = require("../services/emptyPackageService");
 const { processBuyingLabel } = require("../services/buyingLabelService");
 const { processScanLabel } = require("../services/scanLabelService");
-const { processEtsyFFCost, processEtsyOrder, calculateEtsyProfit, calculateKPI, processEtsyStatement } = require("../services/etsyService");
+const { processEtsyFFCost, processEtsyOrder, calculateKPI, processEtsyStatement } = require("../services/etsyService");
 const { processAmzTransaction, processAmzFFCost, processAmzOrder, calculateAmzKPI } = require("../services/amzService");
+const { processWebIdAndRev, processWebFFCostAtWebCost, processWebFFCostAtFFCost, calculateTotalCost, calculateWebProfit, assignProfitToDesignerAndRD } = require("../services/webService");
 
 async function uploadFileCommon(req, res, sheetName, sheetIndex, processFunc, totalKey = "totalSellers") {
   try {
@@ -152,6 +153,144 @@ async function uploadAmzProfit(req, res) {
   }
 }
 
+//Web
+  async function uploadWebOrder(req, res) {
+    return uploadFileCommon(req, res, "", 18, processWebIdAndRev);
+  }
+
+  async function uploadWebCost1(req, res) {
+    return uploadFileCommon(req, res, "", 19, processWebFFCostAtWebCost);
+  }
+
+  async function uploadWebCost2(req, res) {
+    return uploadFileCommon(req, res, "", 20, processWebFFCostAtFFCost);
+  }
+
+async function uploadWebTotalCost(req, res) {
+  try {
+    const month = parseInt(req.query.month);
+    const year = parseInt(req.query.year);
+
+    if (!month || !year) {
+      return res.status(400).json({ error: "Vui lòng nhập ?month=...&year=..." });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: "Vui lòng upload 1 file Excel chứa 2 sheet!" });
+    }
+
+    const filePath = path.join(__dirname, "..", req.file.path);
+
+    // Đọc dữ liệu từ hai sheet
+    const webCostData = readExcelSheet(filePath, "", 19).data;
+    const ffCostData = readExcelSheet(filePath, "", 20).data;
+
+    // Log dữ liệu từ hai sheet
+    console.log("=== Dữ liệu từ sheet Web Cost (Sheet 19) ===");
+    console.log("Số dòng:", webCostData.length);
+    webCostData.forEach((row, index) => {
+      console.log(`Dòng ${index + 1}:`, JSON.stringify(row, null, 2));
+    });
+
+    console.log("\n=== Dữ liệu từ sheet FF Cost (Sheet 20) ===");
+    console.log("Số dòng:", ffCostData.length);
+    ffCostData.forEach((row, index) => {
+      console.log(`Dòng ${index + 1}:`, JSON.stringify(row, null, 2));
+    });
+
+    // Tính tổng chi phí
+    const finalData = calculateTotalCost(webCostData, ffCostData);
+
+    // Xóa file tạm
+    fs.unlinkSync(filePath);
+
+    // Trả về kết quả
+    res.json({
+      sheetName: "Total Cost",
+      month,
+      year,
+      totalRecords: finalData.length,
+      data: finalData,
+    });
+  } catch (error) {
+    console.error("Lỗi xử lý file:", error.message, error.stack);
+    res.status(500).json({ error: "Xử lý file Excel thất bại! Chi tiết: " + error.message });
+  }
+}
+
+async function uploadWebProfit(req, res) {
+  try {
+    const month = parseInt(req.query.month);
+    const year = parseInt(req.query.year);
+
+    if (!month || !year) {
+      return res.status(400).json({ error: "Vui lòng nhập ?month=...&year=..." });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: "Vui lòng upload 1 file Excel chứa 3 sheet!" });
+    }
+
+    const filePath = path.join(__dirname, "..", req.file.path);
+
+    // Đọc dữ liệu từ 3 sheet
+    const orderData = readExcelSheet(filePath, "", 18).data;
+    const webCostData = readExcelSheet(filePath, "", 19).data;
+    const ffCostData = readExcelSheet(filePath, "", 20).data;
+
+    // Kiểm tra dữ liệu có rỗng không
+    if (!orderData.length || !webCostData.length || !ffCostData.length) {
+      fs.unlinkSync(filePath);
+      return res.status(400).json({ error: "Một hoặc nhiều sheet trong file Excel rỗng!" });
+    }
+
+    // Lọc orderData theo tháng và năm
+    const filteredOrderData = orderData.filter(row => {
+      const date = row["Date"] ? excelDateToJSDate(row["Date"]) : null;
+      return date && date.getMonth() + 1 === month && date.getFullYear() === year;
+    });
+
+    // Log dữ liệu từ ba sheet
+    console.log("=== Dữ liệu từ sheet Order (Sheet 18) ===");
+    console.log("Số dòng (trước lọc):", orderData.length);
+    console.log("Số dòng (sau lọc tháng " + month + "/" + year + "):", filteredOrderData.length);
+    filteredOrderData.forEach((row, index) => {
+      console.log(`Dòng ${index + 1}:`, JSON.stringify(row, null, 2));
+    });
+
+    console.log("\n=== Dữ liệu từ sheet Web Cost (Sheet 19) ===");
+    console.log("Số dòng:", webCostData.length);
+    webCostData.forEach((row, index) => {
+      console.log(`Dòng ${index + 1}:`, JSON.stringify(row, null, 2));
+    });
+
+    console.log("\n=== Dữ liệu từ sheet FF Cost (Sheet 20) ===");
+    console.log("Số dòng:", ffCostData.length);
+    ffCostData.forEach((row, index) => {
+      console.log(`Dòng ${index + 1}:`, JSON.stringify(row, null, 2));
+    });
+
+    // Tính profit cho DesignerID và RAndDID
+    const { designerProfit, rdProfit } = assignProfitToDesignerAndRD(filteredOrderData, webCostData, ffCostData);
+
+    // Xóa file tạm
+    fs.unlinkSync(filePath);
+
+    // Trả về kết quả
+    res.json({
+      sheetName: "Designer and R&D Profit",
+      month,
+      year,
+      totalDesignerRecords: designerProfit.length,
+      totalRDRecords: rdProfit.length,
+      designerProfit,
+      rdProfit,
+    });
+  } catch (error) {
+    console.error("Lỗi xử lý file:", error.message, error.stack);
+    res.status(500).json({ error: "Xử lý file Excel thất bại! Chi tiết: " + error.message });
+  }
+}
 module.exports = {
   uploadEmptyPackage,
   uploadBuyingLabel,
@@ -164,4 +303,9 @@ module.exports = {
   uploadAmzFFCost,
   uploadAmzOrder,
   uploadAmzProfit,
+  uploadWebOrder,
+  uploadWebCost1,
+  uploadWebCost2,
+  uploadWebTotalCost,
+  uploadWebProfit,
 };
