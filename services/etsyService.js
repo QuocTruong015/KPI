@@ -1,5 +1,80 @@
 const { excelDateToJSDate } = require("../utils/excelUtils");
 
+// Helper: sanitize and parse amount strings with various formats/currency symbols
+function sanitizeAmount(raw) {
+  if (raw == null) return { amount: 0, currency: "UNKNOWN", raw: "" };
+  let s = String(raw).trim();
+
+  // Normalize common unicode spaces
+  s = s.replace(/\u00A0/g, "").trim(); // non-breaking space
+
+  // Detect negative via parentheses (e.g. (CA$1,234.56)) or leading '-'
+  let isNegative = false;
+  if (/^\(.*\)$/.test(s)) {
+    isNegative = true;
+    s = s.replace(/^\(|\)$/g, "");
+  }
+  if (/^-+/.test(s)) {
+    isNegative = true;
+    s = s.replace(/^-+/, "");
+  }
+
+  // Detect currency symbols anywhere and remove them
+  let currency = "UNKNOWN";
+  const currencyPatterns = [
+    ["CAD", /CA\$|CAD/i],
+    ["VND", /₫|VND/i],
+    ["USD", /\$/i],
+  ];
+  for (const [cur, pat] of currencyPatterns) {
+    if (pat.test(s)) {
+      currency = cur;
+      s = s.replace(pat, "");
+      break;
+    }
+  }
+
+  // Remove any spaces now
+  s = s.replace(/\s+/g, "");
+
+  // Heuristics for decimal/thousand separators:
+  // - If both '.' and ',' present: assume the right-most one is decimal separator
+  // - If only ',' present: if exactly 2 digits after last ',' treat it as decimal, else remove commas
+  const lastDot = s.lastIndexOf('.');
+  const lastComma = s.lastIndexOf(',');
+  if (lastDot !== -1 && lastComma !== -1) {
+    if (lastComma > lastDot) {
+      // comma is decimal, dot is thousands
+      s = s.replace(/\./g, '');
+      s = s.replace(/,/g, '.');
+    } else {
+      // dot is decimal, comma is thousands
+      s = s.replace(/,/g, '');
+    }
+  } else if (lastComma !== -1 && lastDot === -1) {
+    const partAfter = s.slice(lastComma + 1);
+    if (/^\d{1,2}$/.test(partAfter)) {
+      // comma used as decimal
+      s = s.replace(/,/g, '.');
+    } else {
+      // comma used as thousands separator
+      s = s.replace(/,/g, '');
+    }
+  } else {
+    // remove any grouping commas
+    s = s.replace(/,/g, '');
+  }
+
+  // Remove any remaining non-digit/dot characters
+  s = s.replace(/[^0-9.\-]/g, '');
+
+  let num = parseFloat(s);
+  if (isNaN(num)) num = 0;
+  if (isNegative) num = -Math.abs(num);
+
+  return { amount: num, currency, raw: String(raw) };
+}
+
 // Hàm validate row (sử dụng chung cho processEtsyStatement)
 function validateRow(row) {
   const requiredFields = ["Date", "Type", "Order ID (sale, refund)"];
@@ -144,7 +219,7 @@ function processEtsyOrder(data) {
     };
   });
 
-  console.log(`Processed ${result.length} rows for Etsy Order`);
+  // console.log(`Processed ${result.length} rows for Etsy Order`);
   return result;
 }
 
@@ -178,14 +253,108 @@ function processEtsyOrder(data) {
       SaleDate: saleDate || null, // Giữ null nếu không hợp lệ
       OrderID: row["Order ID"],
       SKU: sku,
-      StoreID: row["Store ID"]?.trim() || "Unknown",
+      StoreID: row["Store ID "]?.trim() || "Unknown",
       DesignerID: designerId,
       RAndDID: rAndDId,
     };
   });
 
-  console.log(`Processed ${result.length} rows for Sale Data`);
+  // console.log(`Processed ${result.length} rows for Sale Data`);
   return result;
 }
 
-module.exports = { processEtsyStatement, processEtsyFFCost, processEtsyOrder };
+function calculateEtsyProfit(statementData, ffCostData, orderData, month, year) {
+  // Xử lý dữ liệu từ các hàm hiện có
+  const statementProcessed = processEtsyStatement(statementData, month, year);
+  const ffCostProcessed = processEtsyFFCost(ffCostData);
+  const orderProcessed = processEtsyOrder(orderData);
+
+  // Tạo map để dễ tra cứu theo OrderID và StoreID
+  const statementMap = new Map();
+  statementProcessed.forEach(row => {
+    const key = `${row.OrderID}|${row.StoreID}`;
+    statementMap.set(key, row);
+  });
+
+  const ffCostMap = new Map();
+  ffCostProcessed.forEach(row => {
+    const key = `${row.OrderName}|${row.StoreID}`; // OrderName trong ffCost tương ứng OrderID
+    ffCostMap.set(key, row);
+  });
+
+  const orderMap = new Map();
+  orderProcessed.forEach(row => {
+    const key = `${row.OrderID}|${row.StoreID}`;
+    orderMap.set(key, row);
+  });
+
+  // Gộp dữ liệu và tính profit
+  const result = [];
+  statementMap.forEach((statementRow, key) => {
+    const [orderId, storeId] = key.split("|");
+    const ffCostRow = ffCostMap.get(key);
+    const orderRow = orderMap.get(key);
+
+    // Nếu không có ffCostRow hoặc orderRow, có thể bỏ qua hoặc gán mặc định
+    if (!ffCostRow || !orderRow) {
+      console.warn(`Không tìm thấy dữ liệu khớp cho OrderID: ${orderId}, StoreID: ${storeId}`);
+      return;
+    }
+
+    const profit = statementRow.Revenue - ffCostRow.Cost;
+
+    result.push({
+      OrderID: orderId,
+      StoreID: storeId,
+      Date: statementRow.Date,
+      Revenue: statementRow.Revenue,
+      Cost: ffCostRow.Cost,
+      Profit: Number(profit.toFixed(2)), // Làm tròn 2 chữ số thập phân
+      DesignerID: orderRow.DesignerID,
+      RAndDID: orderRow.RAndDID,
+      Type: statementRow.Type,
+      SKU: orderRow.SKU
+    });
+  });
+
+  console.log(`Processed ${result.length} rows with profit calculation for month: ${month}, year: ${year}`);
+  return result;
+}
+
+function calculateKPI(statementData, ffCostData, orderData, month, year) {
+  // Gọi calculateEtsyProfit để lấy dữ liệu gộp, lưu tạm vào profitData
+  const profitData = calculateEtsyProfit(statementData, ffCostData, orderData, month, year);
+
+  // Tính tổng profit cho từng DesignerID
+  const designerProfit = profitData.reduce((acc, row) => {
+    const id = row.DesignerID;
+    acc[id] = (acc[id] || 0) + row.Profit;
+    acc[id] = Number(acc[id].toFixed(2)); // Làm tròn 2 chữ số thập phân
+    return acc;
+  }, {});
+
+  // Tính tổng profit cho từng RAndDID
+  const randProfit = profitData.reduce((acc, row) => {
+    const id = row.RAndDID;
+    acc[id] = (acc[id] || 0) + row.Profit;
+    acc[id] = Number(acc[id].toFixed(2)); // Làm tròn 2 chữ số thập phân
+    return acc;
+  }, {});
+
+  console.log(`Calculated KPI for month: ${month}, year: ${year}`);
+  console.log(`Designer Profit:`, designerProfit);
+  console.log(`R&D Profit:`, randProfit);
+
+  return {
+    month,
+    year,
+    totalRecords: profitData.length,
+    designerProfit, // { 'XT': 1000.00, 'YZ': 2000.00, ... }
+    randProfit, // { 'MK': 1500.00, 'AB': 2500.00, ... }
+    profitData, // Mảng dữ liệu gốc từ calculateEtsyProfit (lưu tạm)
+  };
+}
+
+
+
+module.exports = { processEtsyStatement, processEtsyFFCost, processEtsyOrder, calculateEtsyProfit, calculateKPI };
