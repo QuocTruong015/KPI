@@ -175,35 +175,93 @@ function calculateWebProfit(orderData, webCostData, ffCostData) {
 }
 
 function assignProfitToDesignerAndRD(orderData, webCostData, ffCostData) {
+  // Gọi hàm xử lý dữ liệu
   const profitData = calculateWebProfit(orderData, webCostData, ffCostData);
-  const designerProfitMap = new Map();
-  const rdProfitMap = new Map();
-  profitData.forEach(order => {
-    const { DesignerID, RAndDID, profit } = order;
 
+  // Log dữ liệu đầu vào để kiểm tra
+  console.log("profitData:", JSON.stringify(profitData, null, 2));
+
+  // Tạo object để tổng hợp Profit cho DesignerID và RAndDID
+  const designerProfitDetails = {}; // { DesignerID: [{ OrderID, profit }] }
+  const rdProfitDetails = {}; // { RAndDID: [{ OrderID, profit }] }
+  const designerProfitTotal = {}; // { DesignerID: totalProfit }
+  const rdProfitTotal = {}; // { RAndDID: totalProfit }
+
+  // Gán Profit từ profitData cho DesignerID và RAndDID
+  profitData.forEach(order => {
+    const { DesignerID, RAndDID, profit, OrderID } = order;
+
+    // Làm tròn profit
+    const roundedProfit = Number(profit.toFixed(2));
+
+    console.log(`Processing Order: OrderID=${OrderID}, DesignerID=${DesignerID}, RAndDID=${RAndDID}, Profit=${roundedProfit}`);
+
+    // Xử lý DesignerID
     if (DesignerID && DesignerID !== "Unknown") {
-      const currentDesignerProfit = designerProfitMap.get(DesignerID) || 0;
-      designerProfitMap.set(DesignerID, currentDesignerProfit + profit);
+      if (!designerProfitDetails[DesignerID]) {
+        designerProfitDetails[DesignerID] = [];
+      }
+      designerProfitDetails[DesignerID].push({
+        OrderID,
+        profit: roundedProfit
+      });
+
+      designerProfitTotal[DesignerID] = Number(
+        ((designerProfitTotal[DesignerID] || 0) + roundedProfit).toFixed(2)
+      );
+    } else {
+      console.log(`Skipped DesignerID: ${DesignerID} (invalid or Unknown)`);
     }
 
+    // Xử lý RAndDID
     if (RAndDID && RAndDID !== "Unknown") {
-      const currentRDProfit = rdProfitMap.get(RAndDID) || 0;
-      rdProfitMap.set(RAndDID, currentRDProfit + profit);
+      if (!rdProfitDetails[RAndDID]) {
+        rdProfitDetails[RAndDID] = [];
+      }
+      rdProfitDetails[RAndDID].push({
+        OrderID,
+        profit: roundedProfit
+      });
+
+      rdProfitTotal[RAndDID] = Number(
+        ((rdProfitTotal[RAndDID] || 0) + roundedProfit).toFixed(2)
+      );
+    } else {
+      console.log(`Skipped RAndDID: ${RAndDID} (invalid or Unknown)`);
     }
   });
 
-  const designerProfit = Array.from(designerProfitMap, ([DesignerID, profit]) => ({
-    DesignerID,
-    profit,
-  }));
+  // Tính tổng profit cho log kiểm tra
+  const totalDesignerProfit = Object.values(designerProfitTotal).reduce(
+    (sum, profit) => sum + profit,
+    0
+  );
+  const totalRDProfit = Object.values(rdProfitTotal).reduce(
+    (sum, profit) => sum + profit,
+    0
+  );
+  const totalOrderProfit = profitData.reduce(
+    (sum, order) => sum + Number(order.profit.toFixed(2)),
+    0
+  );
 
-  const rdProfit = Array.from(rdProfitMap, ([RAndDID, profit]) => ({
-    RAndDID,
-    profit,
-  }));
+  console.log("Designer Profit Details:", JSON.stringify(designerProfitDetails, null, 2));
+  console.log("R&D Profit Details:", JSON.stringify(rdProfitDetails, null, 2));
+  console.log("Designer Profit Total:", JSON.stringify(designerProfitTotal, null, 2));
+  console.log("R&D Profit Total:", JSON.stringify(rdProfitTotal, null, 2));
+  console.log("Total Designer Profit:", Number(totalDesignerProfit.toFixed(2)));
+  console.log("Total R&D Profit:", Number(totalRDProfit.toFixed(2)));
+  console.log("Total Order Profit:", Number(totalOrderProfit.toFixed(2)));
+
   return {
-    designerProfit,
-    rdProfit,
+    totalRecords: profitData.length,
+    designerProfit: designerProfitTotal, // { "XT": 20.00, "YZ": 30.00 }
+    rdProfit: rdProfitTotal, // { "R1": 15.00, "R2": 25.00 }
+    profitDetails: {
+      designer: designerProfitDetails, // { "XT": [{ OrderID, profit }, ...] }
+      rd: rdProfitDetails // { "R1": [{ OrderID, profit }, ...] }
+    },
+    profitData // Lưu dữ liệu gốc để kiểm tra
   };
 }
 

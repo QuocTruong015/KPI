@@ -1,10 +1,11 @@
 const express = require("express");
 const excelRoutes = require("./routes/excelRoutes");
+const { aggregateProfit } = require("./services/aggregateService")
 
 const app = express();
 const PORT = 3000;
 
-app.use("/", excelRoutes);
+app.use('/', excelRoutes); // ← BẮT BUỘC!
 
 app.get("/", (req, res) => {
   res.send(`
