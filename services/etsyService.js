@@ -1,5 +1,9 @@
 const { excelDateToJSDate } = require("../utils/excelUtils");
+const XLSX = require("xlsx");
+const { Parser: FormulaParser } = require('hot-formula-parser');
+const { is } = require("date-fns/locale");
 
+const globalParser = new FormulaParser();
 // Helper: Chuẩn hóa ID (loại bỏ dấu cách, chuẩn hóa định dạng)
 function normalizeId(id) {
   if (!id || id === "Unknown" || id === "") return null;
@@ -86,96 +90,139 @@ function validateRow(row) {
   return missingFields.length === 0 ? null : `Thiếu cột: ${missingFields.join(", ")}`;
 }
 
-// Hàm xử lý dữ liệu Etsy Statement
+function parseNetValue(value) {
+  if (!value) return 0;
+  // Chuyển sang chuỗi, loại bỏ ký tự $, CA, khoảng trắng, dấu phẩy
+  let cleaned = String(value).replace(/CA\$|\$|,/g, "").trim();
+
+  // parseFloat sẽ tự nhận dấu âm nếu có
+  const num = parseFloat(cleaned);
+  return isNaN(num) ? 0 : num;
+}
+
+// === HÀM XỬ LÝ ETSY STATEMENT ===
 function processEtsyStatement(data, month, year) {
   if (!Array.isArray(data) || data.length === 0) {
     throw new Error("Dữ liệu Excel rỗng hoặc không hợp lệ");
   }
 
-    const filtered = data.filter((row, index) => {
+  // ===== B1: Lọc dữ liệu theo tháng & năm =====
+  const filtered = data.filter((row, index) => {
     const date = excelDateToJSDate(row.Date);
     const isValidDate = date && !isNaN(date.getTime());
-    
     if (!isValidDate) {
       console.warn(`Row ${index + 2}: Ngày không hợp lệ (${row.Date})`);
       return false;
     }
-
-    const isValidPeriod = date.getMonth() + 1 === month && date.getFullYear() === year;
-    if (!isValidPeriod) return false;
-
-    const validationError = validateRow(row);
-    if (validationError) {
-      console.warn(`Row ${index + 2}: ${validationError}`);
-      return false;
-    }
-
-    return true;
+    return date.getMonth() + 1 === month && date.getFullYear() === year;
   });
 
-  const result = filtered.map((row, index) => {
-    const amountKey = Object.keys(row).find((k) => k.toLowerCase().includes("amount")) || "Amount";
-    let rawAmount = amountKey && row[amountKey] != null ? String(row[amountKey]).trim() : "0";
-    let currency = "UNKNOWN";
-    let cleanAmount = rawAmount;
+  // ===== B2: Trích xuất Order ID =====
+  const extractOrderId = (info) => {
+    if (!info || info === "--") return "unknown";
+    const match = info.match(/(?<=[:#])\s*(\d+)/);
+    return match ? match[1] : "unknown";
+  };
 
-    // Nhận diện và loại bỏ ký hiệu tiền tệ
-    if (rawAmount.startsWith("-CA$")) {
-      cleanAmount = rawAmount.replace("-CA$", "").trim();
-      currency = "CAD";
-    } else if (rawAmount.startsWith("-₫")) {
-      cleanAmount = rawAmount.replace("-₫", "").trim();
-      currency = "VND";
-    } else if (rawAmount.startsWith("-$")) {
-      cleanAmount = rawAmount.replace("-$", "").trim();
-      currency = "USD";
-    } else if (rawAmount.startsWith("CA$")) {
-      cleanAmount = rawAmount.replace("CA$", "").trim();
-      currency = "CAD";
-    } else if (rawAmount.startsWith("₫")) {
-      cleanAmount = rawAmount.replace("₫", "").trim();
-      currency = "VND";
-    } else if (rawAmount.startsWith("$")) {
-      cleanAmount = rawAmount.replace("$", "").trim();
-      currency = "USD";
+  const dataWithOrderId = filtered.map((row) => ({
+    ...row,
+    ExtractedOrderID: extractOrderId(row["Info"] || row["Title"]),
+  }));
+
+  // ===== B3: Hàm parse tiền =====
+  const parseCurrency = (str) => {
+    if (str === null || str === undefined || str === "--") return 0;
+    const s = String(str).trim();
+    if (s === "" || s.toLowerCase() === "nan") return 0;
+    const cleaned = parseFloat(s.replace(/CA\$|,/g, "").replace("-", ""));
+    if (isNaN(cleaned)) return 0;
+    return s.includes("-") ? -cleaned : cleaned;
+  };
+
+  // ===== B4: Gộp theo (StoreID + OrderID) =====
+  const groupedByStoreAndOrder = {};
+
+  dataWithOrderId.forEach((row) => {
+    const storeId = row["Store ID"];
+    const orderId = row["ExtractedOrderID"];
+    const key = `${storeId}_${orderId}`; // gộp theo cặp khóa
+
+    if (!groupedByStoreAndOrder[key]) {
+      groupedByStoreAndOrder[key] = {
+        StoreID: storeId,
+        OrderID: orderId,
+        Month: row["Month"],
+        Currency: row["Currency"],
+        FeesAndTaxes: 0,
+        SaleRev: 0,
+        TaxAds: 0,
+        MarketingFee: 0,
+        ListingFee: 0.2,
+      };
+    }
+
+    let rev = 0,
+      marketingFee = 0,
+      feesAndTaxes = 0,
+      totalTaxAds = 0;
+
+    if (row["Type"] === "Refund" || row["Type"] === "Sale") {
+      rev = parseCurrency(row["Net"]) / 1.37;
+    } else if (row["Type"].includes("Marketing")) {
+      marketingFee = parseCurrency(row["Net"]) / 1.37;
+    } else if (row["Title"].includes("Tax: Etsy Ads")) {
+      totalTaxAds = parseCurrency(row["Net"]) / 1.37;
     } else {
-      console.warn(`Row ${index + 2}: Ký hiệu tiền tệ không nhận diện được: ${rawAmount}`);
+      feesAndTaxes = parseCurrency(row["Net"]) / 1.37;
     }
 
-    // Xử lý dấu phẩy (ngàn)
-    cleanAmount = cleanAmount.replace(/,/g, "");
-    const amount = parseFloat(cleanAmount) || 0;
-    const isNegative = rawAmount.startsWith("-");
-
-    // Tính Revenue (rev) dựa trên currency
-    let rev = 0;
-    if (currency === "CAD") {
-      rev = amount / 1.37;
-    } else if (currency === "USD") {
-      rev = amount;
-    } else if (currency === "VND") {
-      rev = amount / 26000;
-    } else {
-      rev = amount; // Mặc định nếu không nhận diện được currency
-    }
-    if (isNegative) {
-      rev = -rev;
-    }
-
-    return {
-      Date: excelDateToJSDate(row.Date),
-      Type: String(row["Type"] || "").trim(),
-      Title: String(row["Title"] || "").trim(),
-      Currency: currency,
-      Amount: isNaN(amount) ? 0 : (isNegative ? -amount : amount),
-      StoreID: String(row["Store ID"] || "").trim(),
-      OrderID: String(row["Order ID (sale, refund)"] || "").trim(),
-      Revenue: isNaN(rev) ? 0 : Number(rev.toFixed(2)), // Làm tròn 2 chữ số thập phân
-    };
+    const g = groupedByStoreAndOrder[key];
+    g.FeesAndTaxes += Math.abs(feesAndTaxes);
+    g.TaxAds += Math.abs(totalTaxAds);
+    g.MarketingFee += Math.abs(marketingFee);
+    g.SaleRev += Math.abs(rev);
   });
 
-  console.log(`Processed ${result.length}/${data.length} rows for Etsy Statement (month: ${month}, year: ${year})`);
-  return result;
+  const groupedData = Object.values(groupedByStoreAndOrder);
+
+  // ===== B5: Chia đều TaxAds & MarketingFee của “unknown” cho các order cùng store =====
+  const storesMap = {};
+  groupedData.forEach((o) => {
+    if (!storesMap[o.StoreID]) storesMap[o.StoreID] = [];
+    storesMap[o.StoreID].push(o);
+  });
+
+  Object.values(storesMap).forEach((orders) => {
+    const unknownOrders = orders.filter((o) => o.OrderID === "unknown");
+    const validOrders = orders.filter((o) => o.OrderID !== "unknown");
+    if (unknownOrders.length === 0 || validOrders.length === 0) return;
+
+    const totalTaxAdsUnknown = unknownOrders.reduce((sum, o) => sum + o.TaxAds, 0);
+    const totalMarketingUnknown = unknownOrders.reduce((sum, o) => sum + o.MarketingFee, 0);
+
+    const shareTax = totalTaxAdsUnknown / validOrders.length;
+    const shareMarketing = totalMarketingUnknown / validOrders.length;
+
+    validOrders.forEach((o) => {
+      o.TaxAds += shareTax;
+      o.MarketingFee += shareMarketing;
+    });
+
+    // Xóa order "unknown"
+    orders.splice(0, orders.length, ...validOrders);
+  });
+
+  // ===== B6: Gộp lại tất cả orders sau chia đều =====
+  const finalResult = Object.values(storesMap).flat();
+
+  // ===== B7: Làm tròn số =====
+  return finalResult.map((g) => ({
+    ...g,
+    FeesAndTaxes: g.FeesAndTaxes.toFixed(2),
+    SaleRev: g.SaleRev.toFixed(2),
+    TaxAds: g.TaxAds.toFixed(2),
+    MarketingFee: g.MarketingFee.toFixed(2),
+  }));
 }
 
 // Hàm xử lý dữ liệu Etsy FFCost
@@ -209,12 +256,27 @@ function processEtsyFFCost(data) {
 }
 
 // Hàm xử lý dữ liệu Etsy Order
-function processEtsyOrder(data) {
+function processEtsyOrder(data, month, year) {
   if (!Array.isArray(data) || data.length === 0) {
     throw new Error("Dữ liệu Excel rỗng hoặc không hợp lệ");
   }
 
-  const result = data.map((row, index) => {
+  const filtered = data.filter((row, index) => {
+    const saleDate = excelDateToJSDate(row["Sale Date"]);
+    const isValidDate = saleDate && !isNaN(saleDate.getTime());
+
+    if (!isValidDate) {
+      console.warn(`Row ${index + 2}: Sale Date không hợp lệ (${row["Sale Date"]})`);
+      return false;
+    }
+
+    const isValidPeriod = saleDate.getMonth() + 1 === month && saleDate.getFullYear() === year;
+    if (!isValidPeriod) return false;
+
+    return true;
+  });
+
+  const result = filtered.map((row, index) => {
     // Xử lý Sale Date
     const saleDate = excelDateToJSDate(row["Sale Date"]);
     if (!saleDate || isNaN(saleDate.getTime())) {
@@ -243,136 +305,205 @@ function processEtsyOrder(data) {
       DesignerID: designerId,
       RAndDID: rAndDId,
     };
-  });
-
+  }).filter(row => row.SaleDate !== null);
+  
   console.log(`Processed ${result.length} rows for Etsy Order`);
   return result;
 }
-
-// Hàm tính profit cho Etsy
 function calculateEtsyProfit(statementData, ffCostData, orderData, month, year) {
-  // Xử lý dữ liệu từ các hàm hiện có
+  // Xử lý 3 nguồn dữ liệu
   const statementProcessed = processEtsyStatement(statementData, month, year);
   const ffCostProcessed = processEtsyFFCost(ffCostData);
-  const orderProcessed = processEtsyOrder(orderData);
+  const orderProcessed = processEtsyOrder(orderData, month, year);
 
-  // Tạo map để dễ tra cứu theo OrderID và StoreID
-  const statementMap = new Map();
-  statementProcessed.forEach(row => {
-    const key = `${row.OrderID}|${row.StoreID}`;
-    statementMap.set(key, row);
-  });
+  // Chuẩn hóa key OrderID + StoreID
+  const normalizeKey = (orderId, storeId) => {
+    const cleanOrderId = String(orderId || "").trim().replace(/-/g, "");
+    const cleanStoreId = String(storeId || "").trim();
+    return `${cleanOrderId}|${cleanStoreId}`;
+  };
 
-  const ffCostMap = new Map();
-  ffCostProcessed.forEach(row => {
-    const key = `${row.OrderName}|${row.StoreID}`;
-    ffCostMap.set(key, row);
-  });
+  // Map dữ liệu để tra nhanh
+  const ffCostMap = new Map(ffCostProcessed.map(r => [normalizeKey(r.OrderName, r.StoreID), r]));
+  const orderMap = new Map(orderProcessed.map(r => [normalizeKey(r.OrderID, r.StoreID), r]));
 
-  const orderMap = new Map();
-  orderProcessed.forEach(row => {
-    const key = `${row.OrderID}|${row.StoreID}`;
-    orderMap.set(key, row);
-  });
+  // Hàm chuyển chuỗi tiền về số an toàn
+  const toNum = (v) => {
+    if (v === null || v === undefined) return 0;
+    if (typeof v === "number") return v;
+    const s = String(v).replace(/CA\$|,|\$/g, "").trim();
+    const n = parseFloat(s);
+    return isNaN(n) ? 0 : n;
+  };
 
-  // Gộp dữ liệu và tính profit
+  // Bắt đầu tính profit
   const result = [];
-  statementMap.forEach((statementRow, key) => {
-    const [orderId, storeId] = key.split("|");
+  statementProcessed.forEach((stRow) => {
+    const key = normalizeKey(stRow.OrderID, stRow.StoreID);
     const ffCostRow = ffCostMap.get(key);
     const orderRow = orderMap.get(key);
 
-    // Nếu không có ffCostRow hoặc orderRow, bỏ qua
-    if (!ffCostRow || !orderRow) {
-      console.warn(`Không tìm thấy dữ liệu khớp cho OrderID: ${orderId}, StoreID: ${storeId}`);
-      return;
-    }
+    const revenue = toNum(stRow.SaleRev);
+    const totalCost =
+      toNum(ffCostRow?.Cost) +
+      toNum(stRow.FeesAndTaxes) +
+      toNum(stRow.MarketingFee) +
+      toNum(stRow.ListingFee) +
+      toNum(stRow.TaxAds);
 
-    const profit = statementRow.Revenue - ffCostRow.Cost;
+    const profit = revenue - totalCost;
 
     result.push({
-      OrderID: orderId,
-      StoreID: storeId,
-      Date: statementRow.Date,
-      Revenue: statementRow.Revenue,
-      Cost: ffCostRow.Cost,
+      OrderID: stRow.OrderID,
+      StoreID: stRow.StoreID,
+      Revenue: Number(revenue.toFixed(2)),
+      Cost: Number(totalCost.toFixed(2)),
       Profit: Number(profit.toFixed(2)),
-      DesignerID: normalizeId(orderRow.DesignerID), // Chuẩn hóa ID
-      RAndDID: normalizeId(orderRow.RAndDID),       // Chuẩn hóa ID
-      Type: statementRow.Type,
-      SKU: orderRow.SKU
+      DesignerID: orderRow ? normalizeId(orderRow.DesignerID) : null,
+      RAndDID: orderRow ? normalizeId(orderRow.RAndDID) : null,
+      SKU: orderRow?.SKU || "",
+      _matchedFFCost: !!ffCostRow,
+      _matchedOrder: !!orderRow,
     });
   });
 
-  console.log(`Processed ${result.length} rows with profit calculation for month: ${month}, year: ${year}`);
   return result;
 }
 
+
 // Hàm tính KPI cho Etsy
-function calculateKPI(statementData, ffCostData, orderData, month, year) {
+function calculateKPI(statementData, ffCostData, orderData, customData, month, year) {
   // Gọi calculateEtsyProfit để lấy dữ liệu gộp
   const profitData = calculateEtsyProfit(statementData, ffCostData, orderData, month, year);
+  
+  // Đọc dữ liệu Custom Order
+  const customOrderData = readCustomOrder(customData, month, year);
 
-  // Log dữ liệu đầu vào để kiểm tra
-  console.log("profitData:", JSON.stringify(profitData, null, 2));
-
-  // Tạo object để tổng hợp Profit cho DesignerID và RAndDID
+  // Tạo object để tổng hợp Profit cho DesignerID và R&DID
   const designerProfitTotal = {};
   const rdProfitTotal = {};
 
-  // Gán Profit từ profitData cho DesignerID và RAndDID
+  // Duyệt qua profitData
   profitData.forEach(row => {
-    const { DesignerID, RAndDID, Profit } = row;
-
-    // Làm tròn profit
+    const { DesignerID, RAndDID, Profit, OrderID } = row;
     const roundedProfit = Number(Profit.toFixed(2));
 
-    console.log(`Processing Order: OrderID=${row.OrderID}, DesignerID=${DesignerID}, RAndDID=${RAndDID}, Profit=${roundedProfit}`);
+    // Kiểm tra trùng với CustomOrderData
+    const isCustomMatch = customOrderData.some(custom =>
+      custom.OrderID === OrderID && custom.DesignerID === DesignerID
+    );
 
-    // Xử lý DesignerID
-    if (DesignerID) {
-      designerProfitTotal[DesignerID] = Number(
-        ((designerProfitTotal[DesignerID] || 0) + roundedProfit).toFixed(2)
-      );
-    } else {
-      console.log(`Skipped DesignerID: ${DesignerID} (invalid)`);
+    let designerProfitToAdd = roundedProfit;
+    if (isCustomMatch) {
+      designerProfitToAdd = roundedProfit * 2; // nhân đôi nếu trùng
+      console.log(`✅ Custom match found! OrderID=${OrderID}, Designer=${DesignerID}, Profit x2`);
     }
 
-    // Xử lý RAndDID
+    // Gán cho Designer
+    if (DesignerID) {
+      designerProfitTotal[DesignerID] = Number(
+        ((designerProfitTotal[DesignerID] || 0) + designerProfitToAdd).toFixed(2)
+      );
+    }
+
+    // Gán cho R&D (giữ nguyên)
     if (RAndDID) {
       rdProfitTotal[RAndDID] = Number(
         ((rdProfitTotal[RAndDID] || 0) + roundedProfit).toFixed(2)
       );
-    } else {
-      console.log(`Skipped RAndDID: ${RAndDID} (invalid)`);
     }
   });
 
-  // Tính tổng profit cho log kiểm tra
-  const totalDesignerProfit = Object.values(designerProfitTotal).reduce(
-    (sum, profit) => sum + profit,
-    0
-  );
-  const totalRDProfit = Object.values(rdProfitTotal).reduce(
-    (sum, profit) => sum + profit,
-    0
-  );
-  const totalOrderProfit = profitData.reduce(
-    (sum, row) => sum + Number(row.Profit.toFixed(2)),
-    0
-  );
+  // Tổng hợp kết quả
+  const totalDesignerProfit = Object.values(designerProfitTotal).reduce((sum, p) => sum + p, 0);
+  const totalRDProfit = Object.values(rdProfitTotal).reduce((sum, p) => sum + p, 0);
+  const totalOrderProfit = profitData.reduce((sum, r) => sum + Number(r.Profit.toFixed(2)), 0);
 
   console.log(`Calculated KPI for month: ${month}, year: ${year}`);
-  console.log("Designer Profit Total:", JSON.stringify(designerProfitTotal, null, 2));
-  console.log("R&D Profit Total:", JSON.stringify(rdProfitTotal, null, 2));
-  console.log("Total Designer Profit:", Number(totalDesignerProfit.toFixed(2)));
-  console.log("Total R&D Profit:", Number(totalRDProfit.toFixed(2)));
-  console.log("Total Order Profit:", Number(totalOrderProfit.toFixed(2)));
+  console.log("Designer Profit Total:", designerProfitTotal);
+  console.log("R&D Profit Total:", rdProfitTotal);
+  console.log("Total Designer Profit:", totalDesignerProfit);
+  console.log("Total R&D Profit:", totalRDProfit);
+  console.log("Total Order Profit:", totalOrderProfit);
 
   return {
-    designerProfit: designerProfitTotal, // { "XT": 1000.00, "YZ": 2000.00 }
-    rdProfit: rdProfitTotal             // { "MK": 1500.00, "AB": 2500.00 }
+    designerProfit: designerProfitTotal,
+    rdProfit: rdProfitTotal
   };
 }
 
-module.exports = { processEtsyStatement, processEtsyFFCost, processEtsyOrder, calculateEtsyProfit, calculateKPI };
+function calculateProfitByStoreID(statementData, ffCostData, orderData, month, year) {
+  const profitDetails = calculateEtsyProfit(statementData, ffCostData, orderData, month, year);
+
+  if (!profitDetails || profitDetails.length === 0) {
+    console.warn("Không có dữ liệu profit để tổng hợp theo StoreID");
+    return [];
+  }
+
+  const profitMap = new Map();
+
+  profitDetails.forEach(row => {
+    let storeId = String(row.StoreID || "").trim();
+    if (!storeId) storeId = "UNKNOWN";
+
+    const profit = Number(row.Profit) || 0;
+
+    if (profitMap.has(storeId)) {
+      const curr = profitMap.get(storeId);
+      profitMap.set(storeId, {
+        TotalProfit: curr.TotalProfit + profit,
+        OrderCount: curr.OrderCount + 1
+      });
+    } else {
+      profitMap.set(storeId, { TotalProfit: profit, OrderCount: 1 });
+    }
+  });
+
+  const result = Array.from(profitMap, ([StoreID, data]) => ({
+    StoreID,
+    TotalProfit: Number(data.TotalProfit.toFixed(2)),
+    OrderCount: data.OrderCount
+  }));
+
+  result.sort((a, b) => b.TotalProfit - a.TotalProfit);
+  console.log(`Tổng hợp ${result.length} StoreID`);
+  return result;
+}
+
+function readCustomOrder(data, month, year) {
+  if (!Array.isArray(data) || data.length === 0) {
+    throw new Error("Dữ liệu Excel rỗng hoặc không hợp lệ");
+  }
+
+  const result = data
+    .map((row, index) => {
+      const keys = Object.keys(row);
+      const designerColIndex = keys.indexOf("Assignee");
+
+      // Tạo đối tượng row
+      const rowData = {
+        Date: excelDateToJSDate(row["Last Modified Date"]),
+        Task_Name: String(row["Task name"] || "").trim(),
+        DesignerID: String(row[keys[designerColIndex + 1]] || "").trim(),
+        OrderID: String(row["Order ID"] || "").trim(),
+      };
+
+      if (
+        rowData.DesignerID &&
+        rowData.OrderID &&
+        rowData.Date instanceof Date &&
+        !isNaN(rowData.Date) &&
+        rowData.Date.getMonth() + 1 === month && // getMonth() trả về 0-11, nên +1 để khớp với month (1-12)
+        rowData.Date.getFullYear() === year
+      ) {
+        return rowData;
+      }
+      return null;
+    })
+    .filter(row => row !== null); // Loại bỏ các row null
+
+  console.log(`Processed ${result.length} rows for Custom Order in ${month}/${year}`);
+  return result;
+}
+
+module.exports = { processEtsyStatement, processEtsyFFCost, processEtsyOrder, calculateEtsyProfit, calculateKPI, calculateProfitByStoreID, readCustomOrder };

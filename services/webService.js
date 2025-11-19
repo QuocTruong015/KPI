@@ -128,11 +128,8 @@ function calculateTotalCost(webCostData, ffCostData) {
 }
 
 function calculateWebProfit(orderData, webCostData, ffCostData) {
-  // Gọi hàm xử lý dữ liệu từ processWebIdAndRev
   const orderResult = processWebIdAndRev(orderData);
-
-  // Gọi hàm calculateTotalCost để tính tổng chi phí
-  const costResult = calculateTotalCost(webCostData, ffCostData);
+  const costResult = calculateTotalCost(webCostData, ffCostData); 
 
   // Tạo một Map để lưu trữ chi phí theo OrderID
   const costMap = new Map();
@@ -141,6 +138,7 @@ function calculateWebProfit(orderData, webCostData, ffCostData) {
       Cost1: row.Cost1,
       Cost2: row.Cost2,
       totalCost: row.totalCost,
+      StoreID: row.StoreID,
     });
   });
 
@@ -164,6 +162,7 @@ function calculateWebProfit(orderData, webCostData, ffCostData) {
       Cost1: costData.Cost1,
       Cost2: costData.Cost2,
       totalCost: costData.totalCost,
+      StoreID: costData.StoreID || "Unknown",
       profit: order.Rev - costData.totalCost,
     };
   });
@@ -174,50 +173,59 @@ function calculateWebProfit(orderData, webCostData, ffCostData) {
   return result;
 }
 
-function assignProfitToDesignerAndRD(orderData, webCostData, ffCostData) {
+function assignProfitToDesignerAndRD(orderData, webCostData, ffCostData, month, year) {
   // Gọi hàm xử lý dữ liệu
   const profitData = calculateWebProfit(orderData, webCostData, ffCostData);
 
-  // Log dữ liệu đầu vào để kiểm tra
+  // Đọc dữ liệu Custom Order
+  const customData = readCustomOrder(orderData, month, year);
+
   console.log("profitData:", JSON.stringify(profitData, null, 2));
 
   // Tạo object để tổng hợp Profit cho DesignerID và RAndDID
   const designerProfitDetails = {}; // { DesignerID: [{ OrderID, profit }] }
-  const rdProfitDetails = {}; // { RAndDID: [{ OrderID, profit }] }
-  const designerProfitTotal = {}; // { DesignerID: totalProfit }
-  const rdProfitTotal = {}; // { RAndDID: totalProfit }
+  const rdProfitDetails = {};       // { RAndDID: [{ OrderID, profit }] }
+  const designerProfitTotal = {};   // { DesignerID: totalProfit }
+  const rdProfitTotal = {};         // { RAndDID: totalProfit }
 
   // Gán Profit từ profitData cho DesignerID và RAndDID
   profitData.forEach(order => {
     const { DesignerID, RAndDID, profit, OrderID } = order;
-
-    // Làm tròn profit
     const roundedProfit = Number(profit.toFixed(2));
+
+    // ✅ Kiểm tra trùng với Custom Order
+    const isCustomMatch = customData.some(custom =>
+      custom.OrderID === OrderID && custom.DesignerID === DesignerID
+    );
+
+    let designerProfitToAdd = roundedProfit;
+    if (isCustomMatch) {
+      designerProfitToAdd = roundedProfit * 2;
+      console.log(`✅ Custom match found! OrderID=${OrderID}, Designer=${DesignerID}, Profit x2`);
+    }
 
     console.log(`Processing Order: OrderID=${OrderID}, DesignerID=${DesignerID}, RAndDID=${RAndDID}, Profit=${roundedProfit}`);
 
-    // Xử lý DesignerID
+    // === Designer xử lý ===
     if (DesignerID && DesignerID !== "Unknown") {
-      if (!designerProfitDetails[DesignerID]) {
-        designerProfitDetails[DesignerID] = [];
-      }
+      if (!designerProfitDetails[DesignerID]) designerProfitDetails[DesignerID] = [];
+
       designerProfitDetails[DesignerID].push({
         OrderID,
-        profit: roundedProfit
+        profit: designerProfitToAdd
       });
 
       designerProfitTotal[DesignerID] = Number(
-        ((designerProfitTotal[DesignerID] || 0) + roundedProfit).toFixed(2)
+        ((designerProfitTotal[DesignerID] || 0) + designerProfitToAdd).toFixed(2)
       );
     } else {
       console.log(`Skipped DesignerID: ${DesignerID} (invalid or Unknown)`);
     }
 
-    // Xử lý RAndDID
+    // === R&D xử lý (giữ nguyên profit) ===
     if (RAndDID && RAndDID !== "Unknown") {
-      if (!rdProfitDetails[RAndDID]) {
-        rdProfitDetails[RAndDID] = [];
-      }
+      if (!rdProfitDetails[RAndDID]) rdProfitDetails[RAndDID] = [];
+
       rdProfitDetails[RAndDID].push({
         OrderID,
         profit: roundedProfit
@@ -231,19 +239,10 @@ function assignProfitToDesignerAndRD(orderData, webCostData, ffCostData) {
     }
   });
 
-  // Tính tổng profit cho log kiểm tra
-  const totalDesignerProfit = Object.values(designerProfitTotal).reduce(
-    (sum, profit) => sum + profit,
-    0
-  );
-  const totalRDProfit = Object.values(rdProfitTotal).reduce(
-    (sum, profit) => sum + profit,
-    0
-  );
-  const totalOrderProfit = profitData.reduce(
-    (sum, order) => sum + Number(order.profit.toFixed(2)),
-    0
-  );
+  // === Tổng hợp kiểm tra ===
+  const totalDesignerProfit = Object.values(designerProfitTotal).reduce((sum, profit) => sum + profit, 0);
+  const totalRDProfit = Object.values(rdProfitTotal).reduce((sum, profit) => sum + profit, 0);
+  const totalOrderProfit = profitData.reduce((sum, order) => sum + Number(order.profit.toFixed(2)), 0);
 
   console.log("Designer Profit Details:", JSON.stringify(designerProfitDetails, null, 2));
   console.log("R&D Profit Details:", JSON.stringify(rdProfitDetails, null, 2));
@@ -255,14 +254,96 @@ function assignProfitToDesignerAndRD(orderData, webCostData, ffCostData) {
 
   return {
     totalRecords: profitData.length,
-    designerProfit: designerProfitTotal, // { "XT": 20.00, "YZ": 30.00 }
-    rdProfit: rdProfitTotal, // { "R1": 15.00, "R2": 25.00 }
+    designerProfit: designerProfitTotal,
+    rdProfit: rdProfitTotal,
     profitDetails: {
-      designer: designerProfitDetails, // { "XT": [{ OrderID, profit }, ...] }
-      rd: rdProfitDetails // { "R1": [{ OrderID, profit }, ...] }
+      designer: designerProfitDetails,
+      rd: rdProfitDetails
     },
-    profitData // Lưu dữ liệu gốc để kiểm tra
+    profitData
   };
 }
 
-module.exports = { processWebIdAndRev, processWebFFCostAtWebCost, processWebFFCostAtFFCost, calculateTotalCost, calculateWebProfit, assignProfitToDesignerAndRD };
+function calculateProfitByStoreID_WEB(orderData, webCostData, ffCostData) {
+  const profitData = calculateWebProfit(orderData, webCostData, ffCostData);
+
+  if (!Array.isArray(profitData) || profitData.length === 0) {
+    console.warn("Không có dữ liệu profit để tổng hợp (Web)");
+    return [];
+  }
+
+  const storeMap = new Map();
+
+  profitData.forEach(row => {
+    let storeId = String(row.StoreID || "").trim();
+    if (!storeId || storeId === "Unknown" || storeId === "null") {
+      storeId = "UNKNOWN";
+    }
+
+    const profit = row.profit || 0;
+
+    if (storeMap.has(storeId)) {
+      const curr = storeMap.get(storeId);
+      storeMap.set(storeId, {
+        TotalProfit: curr.TotalProfit + profit,
+        OrderCount: curr.OrderCount + 1
+      });
+    } else {
+      storeMap.set(storeId, {
+        TotalProfit: profit,
+        OrderCount: 1
+      });
+    }
+  });
+
+  const result = Array.from(storeMap, ([StoreID, data]) => ({
+    StoreID,
+    TotalProfit: Number(data.TotalProfit.toFixed(2)),
+    OrderCount: data.OrderCount,
+    profitData: data.profitData
+  }));
+
+  result.sort((a, b) => b.TotalProfit - a.TotalProfit);
+
+  console.log(`Website: Tổng hợp ${result.length} StoreID`);
+  return result;
+}
+
+function readCustomOrder(data, month, year) {
+  // const profitData = calculateEtsyProfit(statementData, ffCostData, orderData, month, year);
+  if (!Array.isArray(data) || data.length === 0) {
+    throw new Error("Dữ liệu Excel rỗng hoặc không hợp lệ");
+  }
+
+  const result = data
+    .map((row, index) => {
+      const keys = Object.keys(row);
+      const designerColIndex = keys.indexOf("Assignee");
+
+      // Tạo đối tượng row
+      const rowData = {
+        Date: excelDateToJSDate(row["Last Modified Date"]),
+        Task_Name: String(row["Task name"] || "").trim(),
+        DesignerID: String(row[keys[designerColIndex + 1]] || "").trim(),
+        OrderID: String(row["Order ID"] || "").trim(),
+      };
+
+      if (
+        rowData.DesignerID &&
+        rowData.OrderID &&
+        rowData.Date instanceof Date &&
+        !isNaN(rowData.Date) &&
+        rowData.Date.getMonth() + 1 === month && // getMonth() trả về 0-11, nên +1 để khớp với month (1-12)
+        rowData.Date.getFullYear() === year
+      ) {
+        return rowData;
+      }
+      return null;
+    })
+    .filter(row => row !== null); // Loại bỏ các row null
+
+  console.log(`Processed ${result.length} rows for Custom Order in ${month}/${year}`);
+  return result;
+}
+
+module.exports = { processWebIdAndRev, processWebFFCostAtWebCost, processWebFFCostAtFFCost, calculateTotalCost, calculateWebProfit, assignProfitToDesignerAndRD, calculateProfitByStoreID_WEB };

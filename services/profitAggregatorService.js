@@ -9,24 +9,34 @@ async function getEtsyProfit(filePath, month, year) {
   const statementData = readExcelSheet(filePath, "", 11).data;
   const ffCostData = readExcelSheet(filePath, "", 12).data;
   const orderData = readExcelSheet(filePath, "", 10).data;
+  const customData = readExcelSheet(filePath, "", 7).data; // ✅ Thêm dòng này
 
   if (!statementData.length || !ffCostData.length || !orderData.length) {
     throw new Error("Etsy: Thiếu sheet 10, 11, 12");
   }
 
-  return await calculateKPI(statementData, ffCostData, orderData, month, year);
+  const finalData = await calculateKPI(statementData, ffCostData, orderData, customData, month, year);
+  return finalData;
 }
-
 async function getAmazonProfit(filePath, month, year) {
   const statementData = readExcelSheet(filePath, "", 15).data;
   const ffCostData = readExcelSheet(filePath, "", 16).data;
   const orderData = readExcelSheet(filePath, "", 14).data;
+  const customData = readExcelSheet(filePath, "", 7).data;
+
+  console.log("getAmazonProfit - statement rows:", statementData.length);
+  console.log("getAmazonProfit - ffCost rows:", ffCostData.length);
+  console.log("getAmazonProfit - order rows:", orderData.length);
+  console.log("getAmazonProfit - custom rows:", customData?.length);
+  console.log("getAmazonProfit - statement sample:", JSON.stringify(statementData.slice(0,3), null, 2));
+  console.log("getAmazonProfit - order sample:", JSON.stringify(orderData.slice(0,3), null, 2));
 
   if (!statementData.length || !ffCostData.length || !orderData.length) {
     throw new Error("Amazon: Thiếu sheet 14, 15, 16");
   }
 
-  return await calculateAmzKPI(statementData, ffCostData, orderData, month, year);
+  const finalData = await calculateAmzKPI(statementData, ffCostData, orderData, customData, month, year);
+  return finalData;
 }
 
 async function getWebProfit(filePath, month, year) {
@@ -43,7 +53,7 @@ async function getWebProfit(filePath, month, year) {
     return d && d.getMonth() + 1 === month && d.getFullYear() === year;
   });
 
-  const { designerProfit, rdProfit } = assignProfitToDesignerAndRD(filteredOrder, webCostData, ffCostData);
+  const { designerProfit, rdProfit } = assignProfitToDesignerAndRD(filteredOrder, webCostData, ffCostData, month, year);
   return { designerProfit, rdProfit };
 }
 
@@ -60,7 +70,7 @@ async function getMerchProfit(filePath, month, year) {
     return d && d.getMonth() + 1 === month && d.getFullYear() === year;
   });
 
-  const { designerProfit, rdProfit } = assignProfitToDesignerAndRDMerch(filteredOrder, skuData);
+  const { designerProfit, rdProfit } = assignProfitToDesignerAndRDMerch(filteredOrder, skuData, month, year);
   return { designerProfit, rdProfit };
 }
 

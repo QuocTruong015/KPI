@@ -1,4 +1,14 @@
 const XLSX = require("xlsx");
+const { parse } = require("date-fns");
+
+function excelDateToJSDateVn(dateValue) {
+  if (typeof dateValue === 'string') {
+    return parse(dateValue, 'dd/MM/yyyy', new Date());
+  } else if (typeof dateValue === 'number') {
+    return new Date((dateValue - 25569) * 86400 * 1000);
+  }
+  return null;
+}
 
 // Chuyển Excel serial date sang JS Date
 function excelDateToJSDate(value) {
@@ -53,4 +63,4 @@ function parseMonthYear(val) {
   return { month, year };
 }
 
-module.exports = { excelDateToJSDate, readExcelSheet, parseMonthYear };
+module.exports = { excelDateToJSDate, readExcelSheet, parseMonthYear, excelDateToJSDateVn };

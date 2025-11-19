@@ -44,7 +44,7 @@ async function calculateCombinedKPI(req, res) {
       return res.status(400).json({ error: "Month (1-12) và year là bắt buộc" });
     }
 
-    // Kiểm tra file
+    // === KIỂM TRA FILE ===
     const profitFile = req.files?.profit_file?.[0] || req.files?.profit_file;
     const targetFile = req.files?.target_file?.[0] || req.files?.target_file;
 
@@ -102,11 +102,16 @@ async function calculateCombinedKPI(req, res) {
     const result = validTargets.map(t => {
       const isRD = /r&d/i.test(t.Position);
       const profitMap = isRD ? rdProfit : designerProfit;
-      const profit = profitMap[t.PIC] || 0;
+
+      // 🔹 Lấy phần mã trong ngoặc, ví dụ "huy (TH)" -> "TH"
+      const picKey = t.PIC?.match(/\(([^)]+)\)/)?.[1]?.trim() || t.PIC?.trim();
+
+      const profit = profitMap[picKey] || 0;
       const kpi = t.Target > 0 ? (profit / t.Target) * 100 : 0;
 
       return {
         PIC: t.PIC,
+        PIC_Key: picKey, // để debug nếu cần
         Position: t.Position,
         Profit: profit,
         Target: t.Target,
@@ -114,37 +119,31 @@ async function calculateCombinedKPI(req, res) {
       };
     });
 
+    // === BƯỚC 4: XUẤT FILE EXCEL ===
     const exportDir = path.join(__dirname, '..', 'exports');
-if (!fs.existsSync(exportDir)) {
-  fs.mkdirSync(exportDir, { recursive: true });
-}
+    if (!fs.existsSync(exportDir)) {
+      fs.mkdirSync(exportDir, { recursive: true });
+    }
 
-exportPath = path.join(exportDir, `KPI_Result_${year}_${month}.xlsx`);
-console.log("Đường dẫn xuất:", exportPath);
+    exportPath = path.join(exportDir, `KPI_Result_${year}_${month}.xlsx`);
+    console.log("Đường dẫn xuất:", exportPath);
 
-const ws = XLSX.utils.json_to_sheet(result);
-const wb = XLSX.utils.book_new();
-XLSX.utils.book_append_sheet(wb, ws, 'KPI');
-XLSX.writeFile(wb, exportPath);
+    const ws = XLSX.utils.json_to_sheet(result);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'KPI');
+    XLSX.writeFile(wb, exportPath);
 
-console.log("File đã tạo:", fs.existsSync(exportPath));
+    console.log("File đã tạo:", fs.existsSync(exportPath));
 
-// === GỬI FILE ===
-res.download(exportPath, `KPI_Result_${year}_${month}.xlsx`, (err) => {
+    // === GỬI FILE VỀ CLIENT ===
+    res.download(exportPath, `KPI_Result_${year}_${month}.xlsx`, (err) => {
       if (err) {
         console.error("Lỗi tải file:", err);
         if (!res.headersSent) res.status(500).json({ error: "Không thể tải file" });
       } else {
         console.log("File đã gửi về client");
-        // setTimeout(() => {
-        //   [profitPath, targetPath, exportPath].forEach(p => {
-        //     if (p && fs.existsSync(p)) {
-        //       try { fs.unlinkSync(p); } catch {}
-        //     }
-        //   });
-        // }, 1000);
       }
-    }); // ← ĐÓNG res.download()
+    });
 
   } catch (error) {
     console.error("Combined KPI Error:", error);
@@ -157,6 +156,6 @@ res.download(exportPath, `KPI_Result_${year}_${month}.xlsx`, (err) => {
       res.status(500).json({ error: error.message });
     }
   }
-} // ← ĐÓNG HÀM calculateCombinedKPI
+}
 
 module.exports = { uploadKpiTargetFile, calculateCombinedKPI };
