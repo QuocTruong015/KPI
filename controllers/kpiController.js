@@ -4,6 +4,9 @@ const XLSX = require('xlsx');
 const { readExcelSheet } = require("../utils/excelUtils");
 const { processTargetKpi } = require("../services/kpiService");
 const { getEtsyProfit, getAmazonProfit, getWebProfit, getMerchProfit } = require("../services/profitAggregatorService");
+const { aggregateProfit } = require("../services/profitAggregatorService");
+const { excelDateToJSDate } = require("../utils/excelUtils");
+const { ta, fi } = require("date-fns/locale");
 
 async function uploadFileCommon(req, res, sheetName, sheetIndex, processFunc, totalKey = "totalSellers") {
   try {
@@ -40,6 +43,7 @@ async function calculateCombinedKPI(req, res) {
   try {
     const month = parseInt(req.query.month);
     const year = parseInt(req.query.year);
+
     if (!month || !year || month < 1 || month > 12) {
       return res.status(400).json({ error: "Month (1-12) và year là bắt buộc" });
     }
@@ -55,103 +59,130 @@ async function calculateCombinedKPI(req, res) {
       });
     }
 
-    profitPath = profitFile.path;
-    targetPath = targetFile.path;
+    // ==== GIỐNG HÀM GỐC: SỬ DỤNG PATH JOIN ====
+    profitPath = path.join(__dirname, "..", profitFile.path);
+    targetPath = path.join(__dirname, "..", targetFile.path);
 
     // === BƯỚC 1: TÍNH PROFIT ===
     const [amazon, etsy, web, merch] = await Promise.all([
-      getAmazonProfit(profitPath, month, year).catch(() => null),
-      getEtsyProfit(profitPath, month, year).catch(() => null),
-      getWebProfit(profitPath, month, year).catch(() => null),
-      getMerchProfit(profitPath, month, year).catch(() => null),
+      getAmazonProfit(profitPath, month, year).catch(err => { console.log("Amazon:", err); return null; }),
+      getEtsyProfit(profitPath, month, year).catch(err => { console.log("Etsy:", err); return null; }),
+      getWebProfit(profitPath, month, year).catch(err => { console.log("Web:", err); return null; }),
+      getMerchProfit(profitPath, month, year).catch(err => { console.log("Merch:", err); return null; }),
     ]);
 
     if (!amazon || !etsy || !web || !merch) {
       return res.status(400).json({ error: "File Profit thiếu dữ liệu từ một hoặc nhiều nền tảng" });
     }
 
-    const designerProfit = {
-      ...amazon.designerProfit,
-      ...etsy.designerProfit,
-      ...web.designerProfit,
-      ...merch.designerProfit
+    // === QUAN TRỌNG: TÁI TẠO LẠI CẤU TRÚC GIỐNG HÀM EXPORT GỐC ===
+    const inputData = {
+      amazon,
+      etsy: [etsy],   // GIỮ ĐÚNG FORMAT CỦA HÀM GỐC
+      web,
+      merch
     };
 
-    const rdProfit = {
-      ...amazon.rdProfit,
-      ...etsy.rdProfit,
-      ...web.rdProfit,
-      ...merch.rdProfit
-    };
+    // === AGGREGATE PROFIT GIỐNG HÀM GỐC ===
+    const aggregated = aggregateProfit(inputData);
+
+    const csmProfit = aggregated.mainPlatformProfit;
+    const designerProfit = aggregated.designerProfit;
+    const rdProfit = aggregated.rdProfit;
+
+    console.log("=== Designer Profit & R&D Profit (Final Aggregated) ===");
+    console.log(designerProfit);
+    console.log(rdProfit);
+    console.log("=== CSM Profit (Final Aggregated) ===");
+    console.log(csmProfit);
 
     // === BƯỚC 2: ĐỌC TARGET ===
-    const workbook = XLSX.readFile(targetPath);
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const rawData = XLSX.utils.sheet_to_json(sheet, { defval: null });
-    const targetList = processTargetKpi(rawData);
+    let targetData = readExcelSheet(targetPath, "KPI", 0).data;
 
-    const validTargets = targetList
-      .filter(t => t.Month?.month === month && t.Month?.year === year)
-      .filter(t => ['Designer', 'R&D', 'designer', 'r&d'].includes(t.Position));
+    const filtered = targetData.filter((row, index) => {
+      const date = excelDateToJSDate(row.Month);
+      const isValidDate = date && !isNaN(date.getTime());
+      if (row.Position == null || row.Position.toString().trim() === "" || row.Position == "Service Staff" || row.Position == "Sales") {
+        return false;
+      }
+      if (!isValidDate) {
+        console.warn(`Row ${index + 2}: Ngày không hợp lệ (${row.Month})`);
+        return false;
+      }
+      return date.getMonth() + 1 === month && date.getFullYear() === year;
+    });
 
-    if (validTargets.length === 0) {
-      return res.status(400).json({ error: `Không tìm thấy Target cho tháng ${month}/${year}` });
-    }
+    console.log("=== Target Data After Filter ===");
+    console.log(filtered);
+
 
     // === BƯỚC 3: KẾT HỢP & TÍNH KPI ===
-    const result = validTargets.map(t => {
-      const isRD = /r&d/i.test(t.Position);
-      const profitMap = isRD ? rdProfit : designerProfit;
+    const result = filtered.map(t => {
 
-      // 🔹 Lấy phần mã trong ngoặc, ví dụ "huy (TH)" -> "TH"
-      const picKey = t.PIC?.match(/\(([^)]+)\)/)?.[1]?.trim() || t.PIC?.trim();
+      // Lấy mã pic
+      const picKey =
+        t.PIC?.match(/\(([^)]+)\)/)?.[1]?.trim() ||
+        t.PIC?.trim();
 
-      const profit = profitMap[picKey] || 0;
-      const kpi = t.Target > 0 ? (profit / t.Target) * 100 : 0;
+      let profit = 0;
+
+      // --- GÁN PROFIT THEO POSITION ---
+      if (t.Position === "R&D") {
+        profit = rdProfit[picKey] || 0;
+      } 
+      else if (t.Position === "Designer") {
+        profit = designerProfit[picKey] || 0;
+      } 
+      else if (t.Position === "CSM - Bán hàng") {
+        profit = csmProfit;   // 👈 TẤT CẢ CSM LẤY CHUNG SỐ NÀY
+      }
+
+      // --- TÍNH KPI ---
+      const kpi = t["Target (100%)"] > 0
+        ? (profit / t["Target (100%)"]) * 100
+        : 0;
 
       return {
         PIC: t.PIC,
-        PIC_Key: picKey, // để debug nếu cần
+        PIC_Key: picKey,
         Position: t.Position,
         Profit: profit,
-        Target: t.Target,
+        Target: t["Target (100%)"],
         KPI: kpi.toFixed(2) + '%'
       };
     });
 
-    // === BƯỚC 4: XUẤT FILE EXCEL ===
+
+    // === BƯỚC 4: XUẤT FILE ===
     const exportDir = path.join(__dirname, '..', 'exports');
     if (!fs.existsSync(exportDir)) {
       fs.mkdirSync(exportDir, { recursive: true });
     }
 
     exportPath = path.join(exportDir, `KPI_Result_${year}_${month}.xlsx`);
-    console.log("Đường dẫn xuất:", exportPath);
 
     const ws = XLSX.utils.json_to_sheet(result);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'KPI');
     XLSX.writeFile(wb, exportPath);
 
-    console.log("File đã tạo:", fs.existsSync(exportPath));
-
-    // === GỬI FILE VỀ CLIENT ===
-    res.download(exportPath, `KPI_Result_${year}_${month}.xlsx`, (err) => {
+    // === GỬI FILE ===
+    res.download(exportPath, `KPI_Result_${year}_${month}.xlsx`, err => {
       if (err) {
         console.error("Lỗi tải file:", err);
         if (!res.headersSent) res.status(500).json({ error: "Không thể tải file" });
-      } else {
-        console.log("File đã gửi về client");
       }
     });
 
   } catch (error) {
     console.error("Combined KPI Error:", error);
+
     [profitPath, targetPath, exportPath].forEach(p => {
-      if (p && fs.existsSync(p)) {
-        try { fs.unlinkSync(p); } catch {}
-      }
+      try {
+        if (p && fs.existsSync(p)) fs.unlinkSync(p);
+      } catch {}
     });
+
     if (!res.headersSent) {
       res.status(500).json({ error: error.message });
     }

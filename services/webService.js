@@ -256,11 +256,6 @@ function assignProfitToDesignerAndRD(orderData, webCostData, ffCostData, month, 
     totalRecords: profitData.length,
     designerProfit: designerProfitTotal,
     rdProfit: rdProfitTotal,
-    profitDetails: {
-      designer: designerProfitDetails,
-      rd: rdProfitDetails
-    },
-    profitData
   };
 }
 

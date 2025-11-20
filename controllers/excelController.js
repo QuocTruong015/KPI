@@ -633,7 +633,7 @@ async function uploadWebProfit(req, res) {
     });
 
     // Tính profit cho DesignerID và RAndDID
-    const { designerProfit, rdProfit, profitData } = assignProfitToDesignerAndRD(filteredOrderData, webCostData, ffCostData, month, year);
+    const { designerProfit, rdProfit } = assignProfitToDesignerAndRD(filteredOrderData, webCostData, ffCostData, month, year);
 
     // Xóa file tạm
     fs.unlinkSync(filePath);
@@ -645,7 +645,6 @@ async function uploadWebProfit(req, res) {
       year,
       designerProfit,
       rdProfit,
-      profitData,
     });
   } catch (error) {
     console.error("Lỗi xử lý file:", error.message, error.stack);
@@ -757,7 +756,7 @@ async function uploadMerchProfitByDesignerAndRD(req, res) {
     res.status(500).json({ error: "Xử lý file Excel thất bại! Chi tiết: " + error.message });
   }
 }
-// excelController.js
+
 async function exportAllProfit(req, res) {
   try {
     const month = parseInt(req.query.month);
@@ -802,8 +801,14 @@ async function exportAllProfit(req, res) {
       merch
     };
 
+    console.log("=== Input Data for Aggregation ===");
+    console.log(inputData);
+
     const aggregated = aggregateProfit(inputData);
     const exportPath = exportProfitToExcel(aggregated);
+
+    console.log("Aggregated Profit Data:", aggregated);
+    console.log("Exported file path:", exportPath);
 
     fs.unlinkSync(filePath);
 

@@ -133,10 +133,16 @@ function aggregateProfit(inputData) {
 
   const totalProfit = Object.values(platformSummary).reduce((a, b) => a + b, 0);
 
+  const mainPlatformProfit =
+  platformSummary.Amazon +
+  platformSummary.Web +
+  platformSummary.Etsy;
+
   return {
     designerProfit: totalDesignerProfit,
     rdProfit: totalRDProfit,
     platformSummary,
+    mainPlatformProfit: Number(mainPlatformProfit.toFixed(2)),
     totalProfit: Number(totalProfit.toFixed(2)),
     month: inputData.amazon?.month || inputData.web?.month || inputData.etsy?.[0]?.month,
     year: inputData.amazon?.year || inputData.web?.year || inputData.etsy?.[0]?.year,

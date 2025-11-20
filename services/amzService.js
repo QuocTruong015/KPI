@@ -312,7 +312,6 @@ function calculateAmzKPI(statementData, ffCostData, orderData, customData, month
     totalRecords: profitData.length,
     designerProfit,
     randProfit,
-    profitData,
   };
 }
 
