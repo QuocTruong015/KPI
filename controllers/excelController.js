@@ -13,9 +13,10 @@ const { exportProfitToExcel } = require('../utils/excelExport');
 const { getEtsyProfit, getAmazonProfit, getWebProfit, getMerchProfit, aggregateProfit } = require("../services/profitAggregatorService");
 const { processPhoneCaseCost, processPhoneCaseRev, processPhoneCaseProfit } = require("../services/phoneCase");
 const { processTracking } = require("../services/trackingService");
-const { processCanvasRev } = require("../services/canvasService");
+const { processCanvasRev, processCanvasCost } = require("../services/canvasService");
 const { processFulfillmentPosterCost } = require("../services/fulfillmentPoster");
 const { processServiceStaff2 } = require("../services/serviceStaff_2Service");
+const { fi } = require("date-fns/locale");
 
 async function uploadFileCommon(req, res, sheetName, sheetIndex, processFunc, totalKey = "totalSellers") {
   try {
@@ -138,7 +139,7 @@ async function uploadBuyingLabel(req, res) {
 }
 
 async function uploadScanLabel(req, res) {
-  return uploadFileCommon(req, res, "Scan Label", 7, processScanLabel);
+  return uploadFileCommon(req, res, "Scan Label Daily", 7, processScanLabel);
 }
 
 async function uploadPhoneCaseCost(req, res) {
@@ -154,7 +155,28 @@ async function uploadTracking(req, res) {
 }
 
 async function uploadCanvasRev(req, res) {
-  return uploadFileWithSheet(req, res, "", 3, processCanvasRev);
+  try{
+    const month = parseInt(req.query.month);
+    const year = parseInt(req.query.year);
+    if (!req.files || !req.files.file || !req.files.costFile) {
+      return res.status(400).json({ error: "Vui lòng upload 2 file Excel: file và costFile!" });
+    }
+    
+    const filePath = path.join(__dirname, "..", req.files.file[0].path);
+    const costFilePath = path.join(__dirname, "..", req.files.costFile[0].path);
+
+    const data = readExcelSheet(filePath, "", 3).data;   // sheet 3 → doanh thu
+    const costData = readExcelSheet(costFilePath, "UCS_Seller Management - Fulfill", 0).data; // UCS_Seller Management - Fulfill
+
+    console.log(costData);
+
+    const finalRevData = processCanvasRev(data, month, year);
+    const finalCostData = processCanvasCost(costData, month, year);
+  }
+  catch (error) {
+    console.error("❌ Lỗi khi đọc file Excel:", error);
+    res.status(500).json({ error: "Đọc file Excel thất bại!" });
+  }
 }
 
 async function uploadFulfillmentPosterCost(req, res) {
@@ -174,15 +196,19 @@ async function uploadFulfillmentPosterCost(req, res) {
     const wb2 = XLSX.readFile(filePath2);
     const wb3 = XLSX.readFile(filePath3);
 
-    // console.log("Workbook 1 Sheets:", wb1.SheetNames);
+    // console.log("Workbook 3 Sheets:", wb3.SheetNames);
 
     const data1 = readExcelSheet(filePath1, "", 19).data; //UCS_2025
     const data2 = readExcelSheet(filePath1, "", 18).data; //UCS_2025
-    const data3 = readExcelSheet(filePath1, "FF Refund - Sellers", 13).data; //UCS_2025
+    const data3 = readExcelSheet(filePath1, "FF Refund - Sellers", 14).data; //UCS_2025
     const data4 = readExcelSheet(filePath2, "Poster US", 0).data; //Daisy
-    const data5 = readExcelSheet(filePath3, "", 0).data; //UCS Poster
+    const data5 = readExcelSheet(filePath1, "UCS - Buying label", 10).data; //UCS_2025
+    const data6 = readExcelSheet(filePath1, "FF Order", 11).data; //UCS_2025
+    const data7 = readExcelSheet(filePath1, "FF Phone Case", 12).data; //UCS_2025
+    const data8 = readExcelSheet(filePath1, "FF Revenue - Sellers", 13).data; //UCS_2025
+    const data9 = readExcelSheet(filePath3, "Fulfillment", 3).data; //UCS Seller Management
 
-    if (!data1.length || !data2.length || !data3.length || !data4.length || !data5.length) {
+    if (!data1.length || !data2.length || !data3.length || !data4.length || !data5.length || !data6.length || !data7.length || !data8.length || !data9.length) {
       fs.unlinkSync(filePath1);
       fs.unlinkSync(filePath2);
       fs.unlinkSync(filePath3);
@@ -213,7 +239,49 @@ async function uploadFulfillmentPosterCost(req, res) {
       return date.getMonth() + 1 === month && date.getFullYear() === year;
     });
 
-    const finalData = processFulfillmentPosterCost(filteredData1, filteredData2, filteredData3, filteredData4, month, year);
+    const filteredData5 = data5.filter((row) => {
+      const date = excelDateToJSDate(row["Date"]);
+      if (!date) return false;
+      return date.getMonth() + 1 === month && date.getFullYear() === year;
+    });
+
+    let filteredData6 = data6.filter((row) => {
+      const date = excelDateToJSDate(row["Bulk Order ID"]);
+      if (!date) return false;
+      return date.getMonth() + 1 === month && date.getFullYear() === year;
+    });
+
+    let filteredData7 = data6.filter((row) => {
+      const date = excelDateToJSDate(row["Single Order ID"]);
+      if (!date) return false;
+      return date.getMonth() + 1 === month && date.getFullYear() === year;
+    });
+
+    let filteredData8 = data6.filter((row) => {
+      const date = excelDateToJSDate(row["Size"]);
+      if (!date) return false;
+      return date.getMonth() + 1 === month && date.getFullYear() === year;
+    });
+
+    let filteredData9 = data7.filter((row) => {
+      const date = excelDateToJSDate(row["created_at"]);
+      if (!date) return false;
+      return date.getMonth() + 1 === month && date.getFullYear() === year;
+    });
+
+    const filteredData10 = data8.filter((row) => {
+      const date = excelDateToJSDate(row["Month"]);
+      if (!date) return false;
+      return date.getMonth() + 1 === month && date.getFullYear() === year;
+    });
+
+    const filteredData11 = data9.filter((row) => {
+      const date = excelDateToJSDate(row["Month"]);
+      if (!date) return false;
+      return date.getMonth() + 1 === month && date.getFullYear() === year;
+    });
+
+    const finalData = processFulfillmentPosterCost(filteredData1, filteredData2, filteredData3, filteredData4, filteredData5, filteredData6, filteredData7, filteredData8, filteredData9, filteredData10, filteredData11, month, year);
 
     return res.json({
       month,
@@ -224,6 +292,20 @@ async function uploadFulfillmentPosterCost(req, res) {
       PolyMailerBySeller: finalData.TotalCostPolyBySeller,
       RefundPosterSeller: finalData.RefundPosterSeller,
       CostPosterUSNC: finalData.CostPosterUSNC,
+      TotalBuyingLabelCost: finalData.TotalBuyingLabelCost,
+      CostPosterUKSeller: finalData.CostPosterUKSeller,
+      CostPosterUSTiktok: finalData.CostPosterUSTiktok,
+      CostGlonluxPoster: finalData.CostGlonluxPoster,
+      CostCanvas: finalData.CostCanvas,
+      CostMangoPoster: finalData.CostMangoPoster,
+      CostPhonecase: finalData.CostPhonecase,
+      Totalcost: finalData.TotalCostSBTT + finalData.TotalCostPolyTT + finalData.TotalCostBySeller + finalData.TotalCostPolyBySeller + finalData.RefundPosterSeller + finalData.CostPosterUSNC + finalData.TotalBuyingLabelCost + finalData.CostPosterUKSeller + finalData.CostPosterUSTiktok + finalData.CostGlonluxPoster + finalData.CostCanvas + finalData.CostMangoPoster + finalData.CostPhonecase,
+      RevPosterTiktok: finalData.RevPosterTiktok,
+      RevPosterSeller: finalData.RevPosterSeller,
+      RevPosterUK: finalData.RevPosterUK,
+      RevCanvas: finalData.RevCanvas, 
+      RevPhonecase: finalData.RevPhonecase,
+      TotalRevenue: finalData.RevPosterTiktok + finalData.RevPosterSeller + finalData.RevPosterUK + finalData.RevCanvas + finalData.RevPhonecase,
     });
 
   } catch (error) {
@@ -245,41 +327,56 @@ async function uploadServiceStaff2(req, res) {
     const wb1 = XLSX.readFile(filePath1);
     const wb2 = XLSX.readFile(filePath2);
 
-    // console.log("Workbook 1 Sheets:", wb1.SheetNames[9]);
-     console.log("Workbook 2 Sheets:", wb2.SheetNames[6]);
+    console.log("Workbook 1 Sheets:", wb1.SheetNames);
+    console.log("Workbook 2 Sheets:", wb2.SheetNames);
 
-    const data1 = readExcelSheet(filePath1, "", 9).data; //Service Staff 2
-    const data2 = readExcelSheet(filePath2, "", 4).data; //Service Staff 2
-    const data3 = readExcelSheet(filePath2, "", 3).data; //Service Staff 2
-    const data4 = readExcelSheet(filePath2, "", 6).data; //Service Staff 2
+    const data1 = readExcelSheet(filePath1, "Buying Labels", 9).data; //Service Staff 2
+    const data2 = readExcelSheet(filePath2, "OTHERS PROJECT", 4).data; //Service Staff 2
+    const data3 = readExcelSheet(filePath2, "SCAN LABEL", 3).data; //Service Staff 2
+    const data4 = readExcelSheet(filePath2, "KPI Detail", 6).data; //Service Staff 2
 
     if (!data1.length) {
       fs.unlinkSync(filePath1);
       return res.status(400).json({ error: "Sheet trong file Excel rỗng!" });
     }
 
-    const finalData1 = data1.filter((row) => {
-      const date = excelDateToJSDate(row["Date"]);
-      if (!date) return false;
-      return date.getMonth() + 1 === month && date.getFullYear() === year;
+    const finalData1 = data1.filter(row => {
+      const date = excelDateToJSDate(row['Date']);
+      if (!date) 
+        return false;
+      const dMonths = date.getFullYear() * 12 + date.getMonth();
+      const target = year * 12 + (month - 1);
+
+      return dMonths >= target - 2 && dMonths <= target;
     });
 
     const finalData2 = data2.filter((row) => {
-      const date = excelDateToJSDate(row["Date"]);
-      if (!date) return false;
-      return date.getMonth() + 1 === month && date.getFullYear() === year;
+      const date = excelDateToJSDate(row['Date']);
+      if (!date) 
+        return false;
+      const dMonths = date.getFullYear() * 12 + date.getMonth();
+      const target = year * 12 + (month - 1);
+
+      return dMonths >= target - 2 && dMonths <= target;
     });
 
     const finalData3 = data3.filter((row) => {
-      const date = excelDateToJSDate(row["Date"]);
-      if (!date) return false;
-      return date.getMonth() + 1 === month && date.getFullYear() === year;
+      const date = excelDateToJSDate(row['Date']);
+      if (!date) 
+        return false;
+      const dMonths = date.getFullYear() * 12 + date.getMonth();
+      const target = year * 12 + (month - 1);
+
+      return dMonths >= target - 2 && dMonths <= target;
     });
 
     const finalData4 = data4.filter((row) => {
-      const date = excelDateToJSDate(row["Date"]);
+      const date = excelDateToJSDate(row['Month']);
       if (!date) return false;
-      return date.getMonth() + 1 === month && date.getFullYear() === year;
+      const dMonths = date.getFullYear() * 12 + date.getMonth();
+      const target = year * 12 + (month - 1);
+
+      return dMonths >= target - 2 && dMonths <= target;
     });
 
     const finalData = await processServiceStaff2(finalData1, finalData2, finalData3, finalData4, month, year);
@@ -329,10 +426,10 @@ async function uploadEtsyProfit(req, res) {
     const filePath = path.join(__dirname, "..", req.file.path);
 
     // Đọc dữ liệu từ 4 sheet
-    const statementData = readExcelSheet(filePath, "", 11).data;//11
-    const ffCostData = readExcelSheet(filePath, "", 12).data;//12
-    const orderData = readExcelSheet(filePath, "", 10).data;//10
-    const customData = readExcelSheet(filePath, "", 7).data;//7
+    const statementData = readExcelSheet(filePath, "Etsy Statement", 11).data;//11
+    const ffCostData = readExcelSheet(filePath, "Etsy FF Cost (Others) ", 12).data;//12
+    const orderData = readExcelSheet(filePath, "Etsy Order", 10).data;//10
+    const customData = readExcelSheet(filePath, "Designer Import", 7).data;//7
 
     // Kiểm tra dữ liệu có rỗng không
     if (!statementData.length || !ffCostData.length || !orderData.length) {
@@ -433,10 +530,10 @@ async function uploadAmzProfit(req, res) {
     const filePath = path.join(__dirname, "..", req.file.path);
 
     // Đọc dữ liệu từ 3 sheet
-    const statementData = readExcelSheet(filePath, "", 15).data;
-    const ffCostData = readExcelSheet(filePath, "", 16).data;
-    const orderData = readExcelSheet(filePath, "", 14).data;
-    const customData = readExcelSheet(filePath, "", 7).data;
+    const statementData = readExcelSheet(filePath, " AMZ Transaction", 15).data;
+    const ffCostData = readExcelSheet(filePath, "AMZ FF Cost (Printify)", 16).data;
+    const orderData = readExcelSheet(filePath, "AMZ Order", 14).data;
+    const customData = readExcelSheet(filePath, "Designer Import", 7).data;
 
     console.log(`statementData sample (${statementData.length} rows):`, JSON.stringify(statementData.slice(0, 2), null, 2));
     console.log(`ffCostData sample (${ffCostData.length} rows):`, JSON.stringify(ffCostData.slice(0, 2), null, 2));
@@ -595,10 +692,10 @@ async function uploadWebProfit(req, res) {
     const filePath = path.join(__dirname, "..", req.file.path);
 
     // Đọc dữ liệu từ 3 sheet
-    const orderData = readExcelSheet(filePath, "", 18).data;
-    const webCostData = readExcelSheet(filePath, "", 19).data;
-    const ffCostData = readExcelSheet(filePath, "", 20).data;
-    const customData = readExcelSheet(filePath, "", 7).data;
+    const orderData = readExcelSheet(filePath, "WEB Order", 18).data;
+    const webCostData = readExcelSheet(filePath, "WEB FF Cost (Printify)", 19).data;
+    const ffCostData = readExcelSheet(filePath, "FF Cost (UCS)", 20).data;
+    const customData = readExcelSheet(filePath, "Designer Import", 7).data;
 
     // Kiểm tra dữ liệu có rỗng không
     if (!orderData.length || !webCostData.length || !ffCostData.length || !customData.length) {

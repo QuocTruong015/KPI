@@ -102,7 +102,7 @@ async function calculateCombinedKPI(req, res) {
     const filtered = targetData.filter((row, index) => {
       const date = excelDateToJSDate(row.Month);
       const isValidDate = date && !isNaN(date.getTime());
-      if (row.Position == null || row.Position.toString().trim() === "" || row.Position == "Service Staff" || row.Position == "Sales") {
+      if (row.Position == null || row.Position.toString().trim() === "") {
         return false;
       }
       if (!isValidDate) {
@@ -111,10 +111,6 @@ async function calculateCombinedKPI(req, res) {
       }
       return date.getMonth() + 1 === month && date.getFullYear() === year;
     });
-
-    console.log("=== Target Data After Filter ===");
-    console.log(filtered);
-
 
     // === BƯỚC 3: KẾT HỢP & TÍNH KPI ===
     const result = filtered.map(t => {
@@ -167,25 +163,13 @@ async function calculateCombinedKPI(req, res) {
     XLSX.writeFile(wb, exportPath);
 
     // === GỬI FILE ===
-    res.download(exportPath, `KPI_Result_${year}_${month}.xlsx`, err => {
-      if (err) {
-        console.error("Lỗi tải file:", err);
-        if (!res.headersSent) res.status(500).json({ error: "Không thể tải file" });
-      }
+    return res.json({
+        message: "Xuất file thành công",
+        file: `/exports/KPI_Result_${year}_${month}.xlsx`
     });
-
   } catch (error) {
-    console.error("Combined KPI Error:", error);
-
-    [profitPath, targetPath, exportPath].forEach(p => {
-      try {
-        if (p && fs.existsSync(p)) fs.unlinkSync(p);
-      } catch {}
-    });
-
-    if (!res.headersSent) {
-      res.status(500).json({ error: error.message });
-    }
+    console.error("Lỗi trong calculateCombinedKPI:", error);
+    return res.status(500).json({ error: "Lỗi server nội bộ" });
   }
 }
 
