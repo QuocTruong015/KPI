@@ -171,7 +171,16 @@ function processServiceStaff2(data1, data2, data3, data4, month, year) {
         });
     });
 
-    return Object.values(salesTotals);
+    const staffProfitMap = {};
+    
+    // Lặp qua salesTotals (ví dụ: key 'TN', value {..., profit: 50})
+    Object.entries(salesTotals).forEach(([picKey, data]) => {
+        staffProfitMap[picKey] = data.profit;
+    });
+    
+    // Trả về đối tượng { 'TN': 50, 'NV': 100, ... }
+    return staffProfitMap;
+
 }
 
 module.exports = { processServiceStaff2 };

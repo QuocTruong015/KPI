@@ -73,7 +73,11 @@ router.post(
   '/kpi-combined',
   upload.fields([
     { name: 'profit_file', maxCount: 1 }, //E-comerce
-    { name: 'target_file', maxCount: 1 } //KPI Target
+    { name: 'target_file', maxCount: 1 }, //KPI Target
+    { name: 'ucs2025_file', maxCount: 1 },//UCS_2025
+    { name: 'daisy_file', maxCount: 1 }, //Daisy
+    { name: 'ucs_poster_file', maxCount: 1 }, //UCS Poster
+    { name: 'ucs_seller_management_file', maxCount: 1 }, //UCS_seller management
   ]),
   calculateCombinedKPI
 );

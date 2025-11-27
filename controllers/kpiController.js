@@ -6,7 +6,12 @@ const { processTargetKpi } = require("../services/kpiService");
 const { getEtsyProfit, getAmazonProfit, getWebProfit, getMerchProfit } = require("../services/profitAggregatorService");
 const { aggregateProfit } = require("../services/profitAggregatorService");
 const { excelDateToJSDate } = require("../utils/excelUtils");
-const { ta, fi } = require("date-fns/locale");
+const { processFulfillmentPosterCost } = require("../services/fulfillmentPoster");
+const { processEmptyPackage } = require("../services/emptyPackageService");
+const { processBuyingLabel } = require("../services/buyingLabelService");
+const { processScanLabel } = require("../services/scanLabelService");
+const { uploadFulfillmentPosterCost } = require("./excelController");
+const { processServiceStaff2 } = require("../services/serviceStaff_2Service");
 
 async function uploadFileCommon(req, res, sheetName, sheetIndex, processFunc, totalKey = "totalSellers") {
   try {
@@ -52,6 +57,11 @@ async function calculateCombinedKPI(req, res) {
     const profitFile = req.files?.profit_file?.[0] || req.files?.profit_file;
     const targetFile = req.files?.target_file?.[0] || req.files?.target_file;
 
+    const ucs2025File = path.join(__dirname, "..", req.files?.ucs2025_file?.[0]?.path || req.files?.ucs2025_file);
+    const daisyFile = path.join(__dirname, "..", req.files?.daisy_file?.[0]?.path || req.files?.daisy_file);
+    const ucsPosterFile = path.join(__dirname, "..", req.files?.ucs_poster_file?.[0]?.path || req.files?.ucs_poster_file);
+    const ucsSellerManagementFile = path.join(__dirname, "..", req.files?.ucs_seller_management_file?.[0]?.path || req.files?.ucs_seller_management_file);
+
     if (!profitFile || !targetFile) {
       return res.status(400).json({
         error: "Cần upload 2 file: profit_file và target_file",
@@ -63,6 +73,7 @@ async function calculateCombinedKPI(req, res) {
     targetPath = path.join(__dirname, "..", targetFile.path);
 
     // === BƯỚC 1: TÍNH PROFIT ===
+    // 1. Lấy profit từng nền tảng
     const [amazon, etsy, web, merch] = await Promise.all([
       getAmazonProfit(profitPath, month, year).catch(err => { console.log("Amazon:", err); return null; }),
       getEtsyProfit(profitPath, month, year).catch(err => { console.log("Etsy:", err); return null; }),
@@ -73,6 +84,42 @@ async function calculateCombinedKPI(req, res) {
     if (!amazon || !etsy || !web || !merch) {
       return res.status(400).json({ error: "File Profit thiếu dữ liệu từ một hoặc nhiều nền tảng" });
     }
+
+    // 2. Tính profit SS1
+    const data1 = readExcelSheet(ucs2025File, "FF Cost - Ship by Tiktok", 19).data; //UCS_2025
+    const data2 = readExcelSheet(ucs2025File, "FF Cost - Ship by seller", 18).data; //UCS_2025
+    const data3 = readExcelSheet(ucs2025File, "FF Refund - Sellers", 14).data; //UCS_2025
+    const data4 = readExcelSheet(daisyFile, "Poster US", 0).data; //Daisy
+    const data5 = readExcelSheet(ucs2025File, "UCS - Buying label", 10).data; //UCS_2025
+    const data6 = readExcelSheet(ucs2025File, "FF Order", 11).data; //UCS_2025
+    const data7 = readExcelSheet(ucs2025File, "FF Phone Case", 12).data; //UCS_2025
+    const data8 = readExcelSheet(ucs2025File, "FF Revenue - Sellers", 13).data; //UCS_2025
+    const data9 = readExcelSheet(ucsPosterFile, "Fulfillment", 3).data; //UCS Seller Management
+    const data10 = readExcelSheet(ucs2025File, "OTHERS PROJECT", 4).data; //UCS_2025
+
+    const serviceStaff1Data = processFulfillmentPosterCost (data1, data2, data3, data4, data5, data6, data6, data6, data7, data8, data9, data10, month, year);
+
+    // const data11 = readExcelSheet(ucs2025File, "Empty Package", 8).data; //UCS_2025
+    // const data12 = readExcelSheet(ucs2025File, "Buying Label", 9).data; //UCS_2025
+    const data13 = readExcelSheet(ucs2025File, "SCAN LABEL", 3).data; //UCS_2025
+
+    // const emptyPackage = processEmptyPackage(data11, month, year);
+    // const buyingLabel = processBuyingLabel(data12, month, year);
+    const scanLabel = processScanLabel(data13, month, year);
+
+    // const emptyProfit = emptyPackage.emptyTotalProfit;
+    // const buyingLabelProfit = buyingLabel.buyingTotalProfit;
+    const scanLabelProfit = scanLabel.scanLabelTotalProfit;
+
+    const totalSS1Profit = serviceStaff1Data.TotalProfitSS1 + scanLabelProfit;
+
+    // 3. Tính profit SS2
+    const ss2data1 = readExcelSheet(ucsSellerManagementFile, "Buying Labels", 9).data; //UCS_seller management
+    const ss2data2 = readExcelSheet(ucs2025File, "OTHERS PROJECT", 4).data; //UCS_2025
+    const ss2data3 = readExcelSheet(ucs2025File, "SCAN LABEL", 3).data; //UCS_2025
+    const ss2data4 = readExcelSheet(ucs2025File, "KPI Detail", 6).data; //UCS_2025
+
+    const serviceStaff2ProfitMap = processServiceStaff2(ss2data1, ss2data2, ss2data3, ss2data4, month, year);
 
     // === QUAN TRỌNG: TÁI TẠO LẠI CẤU TRÚC GIỐNG HÀM EXPORT GỐC ===
     const inputData = {
@@ -88,12 +135,6 @@ async function calculateCombinedKPI(req, res) {
     const csmProfit = aggregated.mainPlatformProfit;
     const designerProfit = aggregated.designerProfit;
     const rdProfit = aggregated.rdProfit;
-
-    console.log("=== Designer Profit & R&D Profit (Final Aggregated) ===");
-    console.log(designerProfit);
-    console.log(rdProfit);
-    console.log("=== CSM Profit (Final Aggregated) ===");
-    console.log(csmProfit);
 
     // === BƯỚC 2: ĐỌC TARGET ===
     let targetData = readExcelSheet(targetPath, "KPI", 0).data;
@@ -119,6 +160,7 @@ async function calculateCombinedKPI(req, res) {
         t.PIC?.trim();
 
       let profit = 0;
+      const kpiDesc = t['KPI Desciption'];
 
       // --- GÁN PROFIT THEO POSITION ---
       if (t.Position === "R&D") {
@@ -128,7 +170,15 @@ async function calculateCombinedKPI(req, res) {
         profit = designerProfit[picKey] || 0;
       } 
       else if (t.Position === "CSM - Bán hàng") {
-        profit = csmProfit;   // 👈 TẤT CẢ CSM LẤY CHUNG SỐ NÀY
+        profit = csmProfit;
+      } 
+      else if (t.Position === "Service Staff" && kpiDesc.includes("Tổng lợi nhuận gộp của toàn bộ mảng dịch vụ")) {
+        profit = totalSS1Profit;  
+      }
+      else if (t.Position === "Service Staff" && kpiDesc.includes("Tổng lợi nhuận gộp từ khách hàng do người thực hiện KPI chốt được trong 3")) {
+        // Tra cứu lợi nhuận cá nhân (dạng {PIC: Profit})
+        profit = serviceStaff2ProfitMap[picKey] || 0;  
+        console.log(`SS2 Profit for ${picKey}: ${profit}`);
       }
 
       // --- TÍNH KPI ---

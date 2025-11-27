@@ -1,5 +1,13 @@
 const { excelDateToJSDate } = require("../utils/excelUtils");
 
+function filterByMonthYear(data, column, month, year) {
+    return data.filter(row => {
+        const date = excelDateToJSDate(row[column]);
+        if (!date) return false;
+        return date.getMonth() + 1 === month && date.getFullYear() === year;
+    });
+}
+
 function processFulfillmentPosterCost  (data1, data2, data3, data4, data5, data6, data7, data8, data9, data10, data11, data12, month, year) {
     const filtered1 = data1.filter((row) => {
         const date = excelDateToJSDate(row["Date"]);
@@ -76,20 +84,31 @@ function processFulfillmentPosterCost  (data1, data2, data3, data4, data5, data6
     //FF-order
     let costPosterUKSeller = 0;
     let costPosterUSTiktok = 0;
+    let filteredData6 = data6.filter((row) => {
+      const date = excelDateToJSDate(row["Bulk Order ID"]);
+      if (!date) return false;
+      return date.getMonth() + 1 === month && date.getFullYear() === year;
+    });
 
-    const filtered6 = data6.filter((row) => {
+    filteredData6.forEach((row) => {
         const type = row["Type"];
         if (type === "Ship By Seller _ UK") {
             costPosterUKSeller += parseFloat(row["Buying Label"]) || 0;
         } else if (type === "Ship By Tiktok _ UK") {
             costPosterUSTiktok += parseFloat(row["Buying Label"]) || 0;
-        } 
+        }
     });
 
     let costGlonluxPoster = 0;
     let costCanvas = 0;
 
-    const filtered7 = data7.filter((row) => {
+    let filteredData7 = data7.filter((row) => {
+      const date = excelDateToJSDate(row["Single Order ID"]);
+      if (!date) return false;
+      return date.getMonth() + 1 === month && date.getFullYear() === year;
+    });
+
+    filteredData7.forEach((row) => {
         const type = row["Type"];
         if (type === "Gonlux Poster") {
             costGlonluxPoster += parseFloat(row["Base Cost"]) || 0;
@@ -99,7 +118,14 @@ function processFulfillmentPosterCost  (data1, data2, data3, data4, data5, data6
     });
 
     let costMangoPoster = 0;
-    const filtered8 = data8.filter((row) => {
+
+    let filteredData8 = data8.filter((row) => {
+      const date = excelDateToJSDate(row["Size"]);
+      if (!date) return false;
+      return date.getMonth() + 1 === month && date.getFullYear() === year;
+    });
+
+    filteredData8.forEach((row) => {
         const type = row["Type"];
         if (type === "Mango Poster") {
             costMangoPoster += parseFloat(row["Date Created"]) || 0;
@@ -107,29 +133,45 @@ function processFulfillmentPosterCost  (data1, data2, data3, data4, data5, data6
     });
 
     let costPhonecase = 0;
-    const filtered9 = data9.filter((row) => {
+    let filteredData9 = data9.filter((row) => {
+      const date = excelDateToJSDate(row["created_at"]);
+      if (!date) 
+        return false;
+      return date.getMonth() + 1 === month && date.getFullYear() === year;
+    });
+
+    filteredData9.forEach((row) => {
         costPhonecase += parseFloat(row["grand_total"]) || 0;
     });
 
     let revPosterTiktok = 0;
     let revPosterSeller = 0;
-    const filtered10 = data10.filter((row) => {
+
+    const filteredData10 = data10.filter((row) => {
+      const date = excelDateToJSDate(row["Month"]);
+      if (!date) return false;
+      return date.getMonth() + 1 === month && date.getFullYear() === year;
+    });
+
+    filteredData10.forEach((row) => {
         const type = row["Type"];
         if (type === "Ship by TikTok") {
             revPosterTiktok += parseFloat(row["Amount"]) || 0;
         } else {
             revPosterSeller += parseFloat(row["Amount"]) || 0;
-        }
+        }  
     });
 
     let revPosterUK = 0;
     let revCanvas = 0;
     let revPhonecase = 0;
+
     const filtered11 = data11.filter((row) => {
         const date = excelDateToJSDate(row["Month"]);
         if (!date) return false;
         return date.getMonth() + 1 === month && date.getFullYear() === year;
     });
+
     filtered11.forEach((row) => {
         revPosterUK += parseFloat(row["__EMPTY_19"]) || 0;
         revCanvas += parseFloat(row["__EMPTY_17"]) || 0;
@@ -157,6 +199,10 @@ function processFulfillmentPosterCost  (data1, data2, data3, data4, data5, data6
         }
     });
 
+    const totalCost = totalCostSBTT + totalCostPolyTT + totalCostBySeller + totalCostPolyBySeller + refundPosterSeller + costPosterUSNC + totalBuyingLabelCost + costPosterUKSeller + costPosterUSTiktok + costGlonluxPoster + costCanvas + costMangoPoster + costPhonecase;
+    const totalRev = revPosterTiktok + revPosterSeller + revPosterUK + revCanvas + revPhonecase;
+    const totalSS1ProfitNoScan = (totalRev - totalCost) + profitBuyingLabel + profitEmptyPackage + profitTrackingAo;
+
     return { 
         Month: month, 
         Year: year, 
@@ -180,7 +226,8 @@ function processFulfillmentPosterCost  (data1, data2, data3, data4, data5, data6
         RevPhonecase: revPhonecase,
         ProfitBuyingLabel: profitBuyingLabel,
         ProfitEmptyPackage: profitEmptyPackage,
-        ProfitTrackingAo: profitTrackingAo
+        ProfitTrackingAo: profitTrackingAo,
+        TotalProfitSS1: totalSS1ProfitNoScan
     };
 }
 

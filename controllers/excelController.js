@@ -196,10 +196,10 @@ async function uploadFulfillmentPosterCost(req, res) {
     const wb2 = XLSX.readFile(filePath2);
     const wb3 = XLSX.readFile(filePath3);
 
-    console.log("Workbook 1 Sheets:", wb1.SheetNames);
+    // console.log("Workbook 1 Sheets:", wb1.SheetNames);
 
-    const data1 = readExcelSheet(filePath1, "", 19).data; //UCS_2025
-    const data2 = readExcelSheet(filePath1, "", 18).data; //UCS_2025
+    const data1 = readExcelSheet(filePath1, "FF Cost - Ship by Tiktok", 19).data; //UCS_2025
+    const data2 = readExcelSheet(filePath1, "FF Cost - Ship by seller", 18).data; //UCS_2025
     const data3 = readExcelSheet(filePath1, "FF Refund - Sellers", 14).data; //UCS_2025
     const data4 = readExcelSheet(filePath2, "Poster US", 0).data; //Daisy
     const data5 = readExcelSheet(filePath1, "UCS - Buying label", 10).data; //UCS_2025
@@ -208,16 +208,17 @@ async function uploadFulfillmentPosterCost(req, res) {
     const data8 = readExcelSheet(filePath1, "FF Revenue - Sellers", 13).data; //UCS_2025
     const data9 = readExcelSheet(filePath3, "Fulfillment", 3).data; //UCS Seller Management
     const data10 = readExcelSheet(filePath1, "OTHERS PROJECT", 4).data; //UCS_2025
+
     const data11 = readExcelSheet(filePath1, "Empty Package", 8).data; //UCS_2025
     const data12 = readExcelSheet(filePath1, "Buying Label", 9).data; //UCS_2025
     const data13 = readExcelSheet(filePath1, "SCAN LABEL", 3).data; //UCS_2025
 
-    if (!data1.length || !data2.length || !data3.length || !data4.length || !data5.length || !data6.length || !data7.length || !data8.length || !data9.length || !data10.length) {
-      fs.unlinkSync(filePath1);
-      fs.unlinkSync(filePath2);
-      fs.unlinkSync(filePath3);
-      return res.status(400).json({ error: "Một hoặc nhiều sheet trong file Excel rỗng!" });
-    }
+    // if (!data1.length || !data2.length || !data3.length || !data4.length || !data5.length || !data6.length || !data7.length || !data8.length || !data9.length || !data10.length) {
+    //   fs.unlinkSync(filePath1);
+    //   fs.unlinkSync(filePath2);
+    //   fs.unlinkSync(filePath3);
+    //   return res.status(400).json({ error: "Một hoặc nhiều sheet trong file Excel rỗng!" });
+    // }
 
     const filteredData1 = data1.filter((row) => {
       const date = excelDateToJSDate(row["Date"]);
@@ -291,47 +292,44 @@ async function uploadFulfillmentPosterCost(req, res) {
       return date.getMonth() + 1 === month && date.getFullYear() === year;
     });
 
-    const emptyPackage = processEmptyPackage(data11, month, year);
-    const buyingLabel = processBuyingLabel(data12, month, year);
+    // const emptyPackage = processEmptyPackage(data11, month, year);
+    // const buyingLabel = processBuyingLabel(data12, month, year);
     const scanLabel = processScanLabel(data13, month, year);
 
-    const emptyProfit = emptyPackage.emptyTotalProfit;
-    const buyingLabelProfit = buyingLabel.buyingTotalProfit;
+    // const emptyProfit = emptyPackage.emptyTotalProfit;
+    // const buyingLabelProfit = buyingLabel.buyingTotalProfit;
     const scanLabelProfit = scanLabel.scanLabelTotalProfit;
 
     const finalData = processFulfillmentPosterCost(filteredData1, filteredData2, filteredData3, filteredData4, filteredData5, filteredData6, filteredData7, filteredData8, filteredData9, filteredData10, filteredData11, filteredData12, month, year);
 
-    const totalCost = finalData.TotalCostSBTT + finalData.TotalCostPolyTT + finalData.TotalCostBySeller + finalData.TotalCostPolyBySeller + finalData.RefundPosterSeller + finalData.CostPosterUSNC + finalData.TotalBuyingLabelCost + finalData.CostPosterUKSeller + finalData.CostPosterUSTiktok + finalData.CostGlonluxPoster + finalData.CostCanvas + finalData.CostMangoPoster + finalData.CostPhonecase;
-    const totalRev = finalData.RevPosterTiktok + finalData.RevPosterSeller + finalData.RevPosterUK + finalData.RevCanvas + finalData.RevPhonecase;
+    const totalProfitSS1 = finalData.TotalProfitSS1 + scanLabelProfit;
 
     return res.json({
       month,
       year,
-      // ShipByTT: finalData.TotalCostSBTT,
-      // PolyMailerTT: finalData.TotalCostPolyTT,
-      // ShipBySeller: finalData.TotalCostBySeller,
-      // PolyMailerBySeller: finalData.TotalCostPolyBySeller,
-      // RefundPosterSeller: finalData.RefundPosterSeller,
-      // CostPosterUSNC: finalData.CostPosterUSNC,
-      // TotalBuyingLabelCost: finalData.TotalBuyingLabelCost,
-      // CostPosterUKSeller: finalData.CostPosterUKSeller,
-      // CostPosterUSTiktok: finalData.CostPosterUSTiktok,
-      // CostGlonluxPoster: finalData.CostGlonluxPoster,
-      // CostCanvas: finalData.CostCanvas,
-      // CostMangoPoster: finalData.CostMangoPoster,
-      // CostPhonecase: finalData.CostPhonecase,
-      // Totalcost: totalCost,
-      // RevPosterTiktok: finalData.RevPosterTiktok,
-      // RevPosterSeller: finalData.RevPosterSeller,
-      // RevPosterUK: finalData.RevPosterUK,
-      // RevCanvas: finalData.RevCanvas, 
-      // RevPhonecase: finalData.RevPhonecase,
-      // TotalRevenue: totalRev,
-      // ProfitBuyingLabel: buyingLabelProfit,
-      // ProfitEmptyPackage: emptyProfit,
-      // ProfitTrackingAo: finalData.ProfitTrackingAo,
-      // ProfitScanLabel: scanLabelProfit,
-      TotalProfitSS1: totalRev - totalCost + buyingLabelProfit + emptyProfit + scanLabelProfit + finalData.ProfitTrackingAo,
+      ShipByTT: finalData.TotalCostSBTT,
+      PolyMailerTT: finalData.TotalCostPolyTT,
+      ShipBySeller: finalData.TotalCostBySeller,
+      PolyMailerBySeller: finalData.TotalCostPolyBySeller,
+      RefundPosterSeller: finalData.RefundPosterSeller,
+      CostPosterUSNC: finalData.CostPosterUSNC,
+      TotalBuyingLabelCost: finalData.TotalBuyingLabelCost,
+      CostPosterUKSeller: finalData.CostPosterUKSeller,
+      CostPosterUSTiktok: finalData.CostPosterUSTiktok,
+      CostGlonluxPoster: finalData.CostGlonluxPoster,
+      CostCanvas: finalData.CostCanvas,
+      CostMangoPoster: finalData.CostMangoPoster,
+      CostPhonecase: finalData.CostPhonecase,
+      RevPosterTiktok: finalData.RevPosterTiktok,
+      RevPosterSeller: finalData.RevPosterSeller,
+      RevPosterUK: finalData.RevPosterUK,
+      RevCanvas: finalData.RevCanvas, 
+      RevPhonecase: finalData.RevPhonecase,
+      ProfitBuyingLabel: finalData.ProfitBuyingLabel,
+      ProfitEmptyPackage: finalData.ProfitEmptyPackage,
+      ProfitTrackingAo: finalData.ProfitTrackingAo,
+      ProfitScanLabel: scanLabelProfit,
+      TotalProfitSS1: totalProfitSS1,
     });
 
   } catch (error) {
@@ -347,8 +345,8 @@ async function uploadServiceStaff2(req, res) {
     if (!req.files || !req.files.file1 || !req.files.file2) {
       return res.status(400).json({ error: "Vui lòng upload 2 file Excel: file1, file2!" });
     }
-    const filePath1 = path.join(__dirname, "..", req.files.file1[0].path);
-    const filePath2 = path.join(__dirname, "..", req.files.file2[0].path);
+    const filePath1 = path.join(__dirname, "..", req.files.file1[0].path); //UCS_sellerManagement
+    const filePath2 = path.join(__dirname, "..", req.files.file2[0].path); //UCS2025
 
     const wb1 = XLSX.readFile(filePath1);
     const wb2 = XLSX.readFile(filePath2);
@@ -408,9 +406,6 @@ async function uploadServiceStaff2(req, res) {
     const finalData = await processServiceStaff2(finalData1, finalData2, finalData3, finalData4, month, year);
 
     return res.json({
-      month,
-      year,
-      totalRecords: finalData.length,
       data: finalData,
     });
 
