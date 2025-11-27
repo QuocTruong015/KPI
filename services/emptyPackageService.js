@@ -8,6 +8,8 @@ function processEmptyPackage(data, month, year) {
   });
 
   const result = {};
+  let grandTotalProfit = 0; // ⭐ tổng empty profit
+
   filtered.forEach((row) => {
     const seller = row.Seller?.trim() || "Unknown";
     const rev = parseFloat(row.Rev) || 0;
@@ -20,15 +22,27 @@ function processEmptyPackage(data, month, year) {
       profit = (rev - cost) + (cost * 0.3);
     }
 
-    if (!result[seller]) result[seller] = { Seller: seller, TotalRev: 0, TotalProfit: 0 };
+    // ⭐ cộng dồn tổng profit tất cả seller
+    grandTotalProfit += profit;
+
+    if (!result[seller]) {
+      result[seller] = { Seller: seller, TotalRev: 0, TotalProfit: 0 };
+    }
+
     result[seller].TotalRev += rev;
     result[seller].TotalProfit += profit;
   });
 
-  return Object.values(result).map((s) => ({
+  const sellerList = Object.values(result).map((s) => ({
     Seller: s.Seller,
     TotalRev: +s.TotalRev.toFixed(2),
     TotalProfit: +s.TotalProfit.toFixed(2),
   }));
+
+  return {
+    sellers: sellerList,
+    emptyTotalProfit: +grandTotalProfit.toFixed(2), // ⭐ trả ra luôn
+  };
 }
+
 module.exports = { processEmptyPackage };

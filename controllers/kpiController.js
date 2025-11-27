@@ -59,7 +59,6 @@ async function calculateCombinedKPI(req, res) {
       });
     }
 
-    // ==== GIỐNG HÀM GỐC: SỬ DỤNG PATH JOIN ====
     profitPath = path.join(__dirname, "..", profitFile.path);
     targetPath = path.join(__dirname, "..", targetFile.path);
 
@@ -102,13 +101,12 @@ async function calculateCombinedKPI(req, res) {
     const filtered = targetData.filter((row, index) => {
       const date = excelDateToJSDate(row.Month);
       const isValidDate = date && !isNaN(date.getTime());
-      if (row.Position == null || row.Position.toString().trim() === "") {
-        return false;
-      }
+    
       if (!isValidDate) {
         console.warn(`Row ${index + 2}: Ngày không hợp lệ (${row.Month})`);
         return false;
       }
+
       return date.getMonth() + 1 === month && date.getFullYear() === year;
     });
 
@@ -141,6 +139,7 @@ async function calculateCombinedKPI(req, res) {
       return {
         PIC: t.PIC,
         PIC_Key: picKey,
+        Description: t['KPI Desciption'],
         Position: t.Position,
         Profit: profit,
         Target: t["Target (100%)"],

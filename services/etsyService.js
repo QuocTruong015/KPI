@@ -419,13 +419,6 @@ function calculateKPI(statementData, ffCostData, orderData, customData, month, y
   const totalRDProfit = Object.values(rdProfitTotal).reduce((sum, p) => sum + p, 0);
   const totalOrderProfit = profitData.reduce((sum, r) => sum + Number(r.Profit.toFixed(2)), 0);
 
-  console.log(`Calculated KPI for month: ${month}, year: ${year}`);
-  console.log("Designer Profit Total:", designerProfitTotal);
-  console.log("R&D Profit Total:", rdProfitTotal);
-  console.log("Total Designer Profit:", totalDesignerProfit);
-  console.log("Total R&D Profit:", totalRDProfit);
-  console.log("Total Order Profit:", totalOrderProfit);
-
   return {
     designerProfit: designerProfitTotal,
     rdProfit: rdProfitTotal

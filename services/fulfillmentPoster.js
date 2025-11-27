@@ -1,6 +1,6 @@
 const { excelDateToJSDate } = require("../utils/excelUtils");
 
-function processFulfillmentPosterCost  (data1, data2, data3, data4, data5, data6, data7, data8, data9, data10, data11, month, year) {
+function processFulfillmentPosterCost  (data1, data2, data3, data4, data5, data6, data7, data8, data9, data10, data11, data12, month, year) {
     const filtered1 = data1.filter((row) => {
         const date = excelDateToJSDate(row["Date"]);
         if (!date) return false;
@@ -111,8 +111,6 @@ function processFulfillmentPosterCost  (data1, data2, data3, data4, data5, data6
         costPhonecase += parseFloat(row["grand_total"]) || 0;
     });
 
-    console.log("Filtered Data 10:", data10);
-
     let revPosterTiktok = 0;
     let revPosterSeller = 0;
     const filtered10 = data10.filter((row) => {
@@ -138,8 +136,26 @@ function processFulfillmentPosterCost  (data1, data2, data3, data4, data5, data6
         revPhonecase += parseFloat(row["__EMPTY_15"]) || 0;
     });
 
-    console.log("revPosterUK:", revPosterUK);
-    console.log("revCanvas:", revCanvas);
+    let profitBuyingLabel = 0;
+    let profitEmptyPackage = 0;
+    let profitTrackingAo = 0;
+
+    const filteredData12 = data12.filter((row) => {
+        const date = excelDateToJSDate(row["Date"]);
+        if (!date) return false;
+        return date.getMonth() + 1 === month && date.getFullYear() === year;
+    });
+
+    filteredData12.forEach((row) => {
+        const type = row["Type_1"];
+        if (type === "Buying Label ") {
+            profitBuyingLabel += parseFloat(row["Profit"]) || 0;
+        } else if (type === "Empty Package ") {
+            profitEmptyPackage += parseFloat(row["Profit"]) || 0;
+        } else if (type === "Tracking Ảo ") {
+            profitTrackingAo += parseFloat(row["Profit"]) || 0;
+        }
+    });
 
     return { 
         Month: month, 
@@ -161,7 +177,10 @@ function processFulfillmentPosterCost  (data1, data2, data3, data4, data5, data6
         RevPosterSeller: revPosterSeller,
         RevPosterUK: revPosterUK,
         RevCanvas: revCanvas,
-        RevPhonecase: revPhonecase
+        RevPhonecase: revPhonecase,
+        ProfitBuyingLabel: profitBuyingLabel,
+        ProfitEmptyPackage: profitEmptyPackage,
+        ProfitTrackingAo: profitTrackingAo
     };
 }
 

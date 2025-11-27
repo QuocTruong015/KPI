@@ -31,7 +31,7 @@ router.post("/upload-excel/canvas-rev"
   { name: "costFile", maxCount: 1 },
 ])
 , uploadCanvasRev);
-router.post("/upload-excel/service-staff-1", upload.fields([
+router.post("/upload-excel/service-staff-1", upload.fields([ // thieu empty, buying label, scan label
   { name: "file1", maxCount: 1 }, // UCS_2025
   { name: "file2", maxCount: 1 }, // Daisy
   { name: "file3", maxCount: 1 }, // UCS Poster

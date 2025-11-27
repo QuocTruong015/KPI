@@ -36,6 +36,7 @@ async function getAmazonProfit(filePath, month, year) {
   }
 
   const finalData = await calculateAmzKPI(statementData, ffCostData, orderData, customData, month, year);
+  console.log("getAmazonProfit - finalData:", finalData);
   return finalData;
 }
 

@@ -2,34 +2,27 @@ const { excelDateToJSDate } = require("../utils/excelUtils");
 
 function processScanLabel(data, month, year) {
   const filtered = data.filter((row) => {
-    const date = excelDateToJSDate(row.Date);
-    if (!date) return false;
+    const date = excelDateToJSDate(row['Date']);
+    if (!date) 
+      return false;
     return date.getMonth() + 1 === month && date.getFullYear() === year;
   });
 
-  const result = {};
+  let totalRevenue = 0;
+  const uspsCost = 26 * 40;
+  let totalCostGA = 0;
+  let totalCostTX = 0;
   filtered.forEach((row) => {
-    const seller = row.Seller?.trim() || "Unknown";
-    const user = row.User?.trim() || "";
-    const createdAt = row["Created At"] ? excelDateToJSDate(row["Created At"]) : null;
-    const cost = parseFloat(row.Cost) || 0;
-
-    let profit = 0;
-    if (rev === 1.5) {
-      profit = cost * 0.3;
-    } else {
-      profit = (rev - cost) + (cost * 0.3);
-    }
-
-    if (!result[seller]) result[seller] = { Seller: seller, TotalRev: 0, TotalProfit: 0 };
-    result[seller].TotalRev += rev;
-    result[seller].TotalProfit += profit;
+    const revenue = parseFloat(row['Total Revenue']) || 0;
+    const costGA = parseFloat(row['Cost GA']) || 0;
+    const costTX = parseFloat(row['Cost TX']) || 0;
+    totalRevenue += revenue;
+    totalCostGA += costGA;
+    totalCostTX += costTX;
   });
 
-  return Object.values(result).map((s) => ({
-    Seller: s.Seller,
-    TotalRev: +s.TotalRev.toFixed(2),
-    TotalProfit: +s.TotalProfit.toFixed(2),
-  }));
+  const profit = totalRevenue - (totalCostGA + totalCostTX + uspsCost);
+
+  return { scanLabelTotalProfit: profit };
 }
 module.exports = { processScanLabel };
